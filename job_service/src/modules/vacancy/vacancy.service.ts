@@ -72,10 +72,10 @@ export class VacancyService {
                 where: {
                     company: {
                         name: companyName
-                    },
-                    include: {
-                        company: true
                     }
+                },
+                include: {
+                    company: true
                 }
             });
             this.logger.log(`Successfully fetched vacancies for company ${companyName}`);
@@ -93,10 +93,10 @@ export class VacancyService {
                     salary: {
                         gte: minSalary,
                         lte: maxSalary
-                    },
-                    include: {
-                        company: true
                     }
+                },
+                include: {
+                    company: true
                 }
             });
             this.logger.log(`Successfully fetched vacancies with salary between ${minSalary} and ${maxSalary}`);

@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "Node16",
+    "moduleResolution": "node16",
     "declaration": true,
     "removeComments": true,
     "allowUnreachableCode": false,
@@ -17,9 +17,8 @@
     "lib": ["es2023"],
     "types": [],
     "sourceMap": true,
-    //"outDir": "./dist",
-    //"baseUrl": "./",
-    "rootDirs": ["src", "test"],
+    "outDir": "./dist",
+    "rootDir": "./src",
     "incremental": false,
     "skipLibCheck": true,
     "strictNullChecks": false,
@@ -30,6 +29,6 @@
     "noFallthroughCasesInSwitch": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*", "test/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test"]
 }
