@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Vacancy {
+  id        Int      @id @default(autoincrement())
+  title     String   @db.VarChar()
+  description String @db.VarChar()
+  company   Company  @relation(fields: [companyId], references: [id])
+  companyId Int
+  salary    Float
+  link      String   @db.VarChar()
+  city      String   @db.VarChar()
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Company {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar() @unique
+  vacancies Vacancy[]
+}
