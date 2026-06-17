@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=example
+      - POSTGRES_DB=jobs
+    ports:
+      - "5425:5432"
+    volumes:
+      - ./db-volumes/database/postgres:/var/lib/postgresql/data
+  job_service:
+    container_name: job_service
+    restart: always
+    build:
+      context: ./job_service
+      dockerfile: Dockerfile
+    expose:
+      - "5003"
+    ports:
+      - "127.0.0.1:5003:5003"
+    volumes:
+      - ./job_service:/app
+      - /app/node_modules
+      - ./var/log:/var/job/log
+    environment:
+      - PORT=5003
+      - DATABASE_URL=postgresql://root:example@postgres:5432/job?schema=public
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+    depends_on:
+      - postgres
+networks:
+  network:
+    driver: bridge
