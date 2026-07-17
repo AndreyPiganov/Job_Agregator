@@ -1,0 +1,31 @@
+# Binaries
+/bin
+/vacancy-service
+
+# Coverage and tests
+/coverage
+*.test
+*.out
+
+# Logs
+logs
+*.log
+
+# OS and editors
+.DS_Store
+.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Temp
+.temp
+.tmp
+tmp

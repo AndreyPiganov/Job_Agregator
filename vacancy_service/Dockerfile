@@ -1,0 +1,12 @@
+FROM golang:alpine
+
+WORKDIR /app
+
+COPY go.mod go.sum* ./
+RUN go mod download
+
+COPY . .
+
+EXPOSE 5003
+
+CMD ["go", "run", "./cmd/vacancy-service"]

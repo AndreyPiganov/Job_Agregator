@@ -1,0 +1,6 @@
+bin
+dist
+tmp
+.env
+.git
+.DS_Store
