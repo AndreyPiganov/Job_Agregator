@@ -1,56 +1,72 @@
-package http
+package vacancy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	domain "vacancy_service/internal/domain"
-	"vacancy_service/internal/repository"
-	"vacancy_service/internal/service"
+	"vacancy_service/internal/http/handler/dto"
+	service "vacancy_service/internal/service"
 	"vacancy_service/internal/validation"
 )
 
-type VacancyHandler struct {
+type Service interface {
+	List(ctx context.Context, p service.Pagination) ([]domain.Vacancy, error)
+	GetByID(ctx context.Context, id int64) (domain.Vacancy, error)
+	Create(ctx context.Context, input service.CreateVacancyInput) (domain.Vacancy, error)
+	CreateBatch(ctx context.Context, inputs []service.CreateVacancyInput) ([]domain.Vacancy, error)
+	ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error)
+	ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error)
+}
+
+type handler struct {
 	// Handler owns HTTP concerns: reading query params/body, validation,
 	// calling repository methods, and writing JSON responses.
-	vacancies *service.VacancyService
-	logger    *slog.Logger
+	service Service
+	logger  *slog.Logger
 }
 
-type Pagination struct {
-	Page         int
-	ItemsPerPage int
-}
-
-func NewVacancyHandler(vacancies *service.VacancyService, logger *slog.Logger) *VacancyHandler {
-	return &VacancyHandler{
-		vacancies: vacancies,
-		logger:    logger,
+func NewHandler(service Service, logger *slog.Logger) *handler {
+	return &handler{
+		service: service,
+		logger:  logger,
 	}
 }
 
-func (h *VacancyHandler) Health(w http.ResponseWriter, _ *http.Request) {
+func (h *handler) Health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (h *VacancyHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *handler) List(w http.ResponseWriter, r *http.Request) {
 	// Query params arrive as strings. Helpers parse them and provide defaults.
-	page := queryInt(r, "page", 1)
-	limit := queryInt(r, "itemsPerPage", 10)
+	page, err := queryInt(r, "page", 1)
+	if err != nil || page < 1 {
+		writeError(w, http.StatusBadRequest, "page must be a positive integer")
+		return
+	}
+	limit, err := queryInt(r, "itemsPerPage", 10)
+	if err != nil || limit < 1 {
+		writeError(w, http.StatusBadRequest, "itemsPerPage must be a positive integer")
+		return
+	}
 
-	p := domain.Pagination{
+	p := service.Pagination{
 		Page:         page,
 		ItemsPerPage: limit,
 	}
+	if p.ItemsPerPage > 100 {
+		p.ItemsPerPage = 100
+	}
 
-	p.Normalize()
-
-	vacancies, err := h.vacancies.List(r.Context(), p)
+	vacancies, err := h.service.List(r.Context(), p)
 	if err != nil {
 		h.logger.Error("failed to list vacancies", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not fetch vacancies")
@@ -60,7 +76,7 @@ func (h *VacancyHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, vacancies)
 }
 
-func (h *VacancyHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+func (h *handler) GetByID(w http.ResponseWriter, r *http.Request) {
 	// The router matches /vacancies/{id}; here we manually extract the id from
 	// the path because net/http keeps things deliberately simple.
 	idText := strings.TrimPrefix(r.URL.Path, "/vacancies/")
@@ -70,8 +86,8 @@ func (h *VacancyHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vacancy, err := h.vacancies.GetByID(r.Context(), id)
-	if errors.Is(err, repository.ErrNotFound) {
+	vacancy, err := h.service.GetByID(r.Context(), id)
+	if errors.Is(err, domain.ErrVacancyNotFound) {
 		writeError(w, http.StatusNotFound, "vacancy not found")
 		return
 	}
@@ -84,35 +100,27 @@ func (h *VacancyHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, vacancy)
 }
 
-func (h *VacancyHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var dtoReq domain.CreateVacancyRequest
+func (h *handler) Create(w http.ResponseWriter, r *http.Request) {
+	var dtoReq dto.CreateVacancyRequest
 	// decode into DTO so we can validate tags using go-playground/validator
 	if err := decodeJSON(r, &dtoReq); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON request body")
 		return
 	}
-	if validation.Validate != nil {
-		if err := validation.Validate.Struct(dtoReq); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if err := validation.Struct(dtoReq); err != nil {
+		writeError(w, http.StatusBadRequest, validation.Message(err))
+		return
 	}
 
-	// map DTO -> domain domain and run domain validation
-	input := domain.VacancyInput{
-		Title:       dtoReq.Title,
-		Description: dtoReq.Description,
+	input := service.CreateVacancyInput{
+		Title:       strings.TrimSpace(dtoReq.Title),
+		Description: strings.TrimSpace(dtoReq.Description),
 		Salary:      float64(dtoReq.Salary),
-		Link:        dtoReq.Link,
-		City:        dtoReq.City,
-		Company:     &domain.Company{Name: dtoReq.CompanyName},
+		Link:        strings.TrimSpace(dtoReq.Link),
+		City:        strings.TrimSpace(dtoReq.City),
+		CompanyName: strings.TrimSpace(dtoReq.CompanyName),
 	}
-	if err := validateVacancyInput(input); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	vacancy, err := h.vacancies.Create(r.Context(), input)
+	vacancy, err := h.service.Create(r.Context(), input)
 	if err != nil {
 		h.logger.Error("failed to create vacancy", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not create vacancy")
@@ -122,13 +130,13 @@ func (h *VacancyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, vacancy)
 }
 
-func (h *VacancyHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
+func (h *handler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	// Batch endpoint is meant for parser_service. It accepts many vacancies in
 	// one HTTP request, then repository writes them in one transaction.
 	// decode into DTOs first so we can validate tags
 	dtoInputs, err := decodeBatchDTO(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON request body")
 		return
 	}
 	if len(dtoInputs) == 0 {
@@ -140,30 +148,24 @@ func (h *VacancyHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// validate DTOs and map them to domain inputs
-	inputs := make([]domain.VacancyInput, 0, len(dtoInputs))
+	inputs := make([]service.CreateVacancyInput, 0, len(dtoInputs))
 	for _, d := range dtoInputs {
-		if validation.Validate != nil {
-			if err := validation.Validate.Struct(d); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
-		in := domain.VacancyInput{
-			Title:       d.Title,
-			Description: d.Description,
-			Salary:      float64(d.Salary),
-			Link:        d.Link,
-			City:        d.City,
-			Company:     &domain.Company{Name: d.CompanyName},
-		}
-		if err := validateVacancyInput(in); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		if err := validation.Struct(d); err != nil {
+			writeError(w, http.StatusBadRequest, validation.Message(err))
 			return
+		}
+		in := service.CreateVacancyInput{
+			Title:       strings.TrimSpace(d.Title),
+			Description: strings.TrimSpace(d.Description),
+			Salary:      float64(d.Salary),
+			Link:        strings.TrimSpace(d.Link),
+			City:        strings.TrimSpace(d.City),
+			CompanyName: strings.TrimSpace(d.CompanyName),
 		}
 		inputs = append(inputs, in)
 	}
 
-	vacancies, err := h.vacancies.CreateBatch(r.Context(), inputs)
+	vacancies, err := h.service.CreateBatch(r.Context(), inputs)
 	if err != nil {
 		h.logger.Error("failed to create vacancy batch", "count", len(inputs), "error", err)
 		writeError(w, http.StatusInternalServerError, "could not create vacancy batch")
@@ -173,14 +175,14 @@ func (h *VacancyHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, vacancies)
 }
 
-func (h *VacancyHandler) ListByCompany(w http.ResponseWriter, r *http.Request) {
+func (h *handler) ListByCompany(w http.ResponseWriter, r *http.Request) {
 	companyName, err := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/vacancies/company/"))
 	if err != nil || strings.TrimSpace(companyName) == "" {
 		writeError(w, http.StatusBadRequest, "invalid company name")
 		return
 	}
 
-	vacancies, err := h.vacancies.ListByCompany(r.Context(), companyName)
+	vacancies, err := h.service.ListByCompany(r.Context(), companyName)
 	if err != nil {
 		h.logger.Error("failed to list vacancies by company", "company", companyName, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not fetch vacancies")
@@ -190,7 +192,7 @@ func (h *VacancyHandler) ListByCompany(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, vacancies)
 }
 
-func (h *VacancyHandler) ListBySalary(w http.ResponseWriter, r *http.Request) {
+func (h *handler) ListBySalary(w http.ResponseWriter, r *http.Request) {
 	minSalary, err := queryFloat(r, "minSalary")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "minSalary is required and must be a number")
@@ -206,7 +208,7 @@ func (h *VacancyHandler) ListBySalary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vacancies, err := h.vacancies.ListBySalaryRange(r.Context(), minSalary, maxSalary)
+	vacancies, err := h.service.ListBySalaryRange(r.Context(), minSalary, maxSalary)
 	if err != nil {
 		h.logger.Error("failed to list vacancies by salary", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not fetch vacancies")
@@ -225,65 +227,45 @@ func decodeJSON(r *http.Request, target any) error {
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("request body must contain one JSON value")
+	}
 
 	return nil
 }
 
-// func decodeBatch(r *http.Request) ([]domain.VacancyInput, error) {
-// 	var raw json.RawMessage
-// 	if err := decodeJSON(r, &raw); err != nil {
-// 		return nil, err
-// 	}
-
-// 	// Support both formats:
-// 	// 1. [{...}, {...}]
-// 	// 2. {"vacancies": [{...}, {...}]}
-// 	var inputs []domain.VacancyInput
-// 	if err := json.Unmarshal(raw, &inputs); err == nil {
-// 		return inputs, nil
-// 	}
-
-// 	var wrapped domain.BatchVacancyInput
-// 	if err := json.Unmarshal(raw, &wrapped); err != nil {
-// 		return nil, err
-// 	}
-// 	return wrapped.Vacancies, nil
-// }
-
-func decodeBatchDTO(r *http.Request) ([]domain.CreateVacancyRequest, error) {
+func decodeBatchDTO(r *http.Request) ([]dto.CreateVacancyRequest, error) {
 	var raw json.RawMessage
 	if err := decodeJSON(r, &raw); err != nil {
 		return nil, err
 	}
 
-	var inputs []domain.CreateVacancyRequest
+	var inputs []dto.CreateVacancyRequest
 	if err := json.Unmarshal(raw, &inputs); err == nil {
 		return inputs, nil
 	}
 
-	var wrapped struct {
-		Vacancies []domain.CreateVacancyRequest `json:"vacancies"`
-	}
+	var wrapped dto.CreateVacancyBatchRequest
 	if err := json.Unmarshal(raw, &wrapped); err != nil {
 		return nil, err
 	}
 	return wrapped.Vacancies, nil
 }
 
-func validateVacancyInput(input domain.VacancyInput) error {
-	return input.Validate()
-}
-
-func queryInt(r *http.Request, key string, fallback int) int {
-	value, err := strconv.Atoi(r.URL.Query().Get(key))
-	if err != nil {
-		return fallback
+func queryInt(r *http.Request, key string, fallback int) (int, error) {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return fallback, nil
 	}
-	return value
+	return strconv.Atoi(raw)
 }
 
 func queryFloat(r *http.Request, key string) (float64, error) {
-	return strconv.ParseFloat(r.URL.Query().Get(key), 64)
+	value, err := strconv.ParseFloat(r.URL.Query().Get(key), 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, errors.New("invalid number")
+	}
+	return value, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -293,6 +275,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+		return
 	}
 }
 

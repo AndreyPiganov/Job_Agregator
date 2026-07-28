@@ -1,26 +1,45 @@
 package http
 
 import (
-	"log/slog"
+	"encoding/json"
 	"net/http"
-
-	handler "vacancy_service/internal/http/handler"
-	service "vacancy_service/internal/service"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func NewRouter(vacancies *service.VacancyService, logger *slog.Logger) http.Handler {
-	r := chi.NewRouter()
+// VacancyHandler describes only the HTTP endpoints the router needs.
+// The router is independent from concrete handler and service types.
+type VacancyHandler interface {
+	Health(http.ResponseWriter, *http.Request)
+	List(http.ResponseWriter, *http.Request)
+	GetByID(http.ResponseWriter, *http.Request)
+	Create(http.ResponseWriter, *http.Request)
+	CreateBatch(http.ResponseWriter, *http.Request)
+	ListByCompany(http.ResponseWriter, *http.Request)
+	ListBySalary(http.ResponseWriter, *http.Request)
+}
 
-	r.Use(middleware.Logger)
+func NewRouter(vacancyHandler VacancyHandler) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 
-	vacancyHandler := handler.NewVacancyHandler(vacancies, logger)
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeRouterError(w, http.StatusNotFound, "route not found")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeRouterError(w, http.StatusMethodNotAllowed, "method not allowed")
+	})
 
+	RegisterRoutes(r, vacancyHandler)
+	return r
+}
+
+func RegisterRoutes(r chi.Router, vacancyHandler VacancyHandler) {
+	r.Get("/health", vacancyHandler.Health)
 	r.Route("/vacancies", func(r chi.Router) {
-		r.Get("/health", vacancyHandler.Health)
 		r.Get("/", vacancyHandler.List)
 		r.Post("/", vacancyHandler.Create)
 		r.Post("/batch", vacancyHandler.CreateBatch)
@@ -28,6 +47,10 @@ func NewRouter(vacancies *service.VacancyService, logger *slog.Logger) http.Hand
 		r.Get("/company/{companyName}", vacancyHandler.ListByCompany)
 		r.Get("/{id}", vacancyHandler.GetByID)
 	})
+}
 
-	return r
+func writeRouterError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 5003
 
-CMD ["go", "run", "./cmd/vacancy-service"]
+CMD ["go", "run", "./cmd/vacancy"]

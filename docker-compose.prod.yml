@@ -17,7 +17,7 @@ services:
     restart: always
     build:
       context: ./vacancy_service
-      dockerfile: Dockerfile_dev
+      dockerfile: Dockerfile_prod
     expose:
       - "5003"
     ports:

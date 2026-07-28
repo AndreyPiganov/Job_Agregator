@@ -12,8 +12,9 @@ import (
 	"vacancy_service/internal/config"
 	"vacancy_service/internal/db"
 	httpapi "vacancy_service/internal/http"
-	"vacancy_service/internal/repository"
-	"vacancy_service/internal/service"
+	vacancyHandler "vacancy_service/internal/http/handler"
+	vacancyRepository "vacancy_service/internal/repository"
+	vacancyService "vacancy_service/internal/service"
 	"vacancy_service/internal/storage"
 	"vacancy_service/internal/validation"
 )
@@ -46,13 +47,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Dependencies flow inward:
-	// HTTP handler -> repository -> sqlc queries -> pgx pool -> PostgreSQL.
-	vacancyRepo := repository.NewVacancyRepository(pool)
-	vacancyService := service.NewVacancyService(vacancyRepo, logger)
+	// main wires concrete implementations together.
+	// The dependency flow is: HTTP handler -> service -> repository -> database.
+	vacancyR := vacancyRepository.NewVacancyRepository(pool)
+	vacancyS := vacancyService.NewService(vacancyR)
+	vacancyH := vacancyHandler.NewHandler(vacancyS, logger)
+
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      httpapi.NewRouter(vacancyService, logger),
+		Handler:      httpapi.NewRouter(vacancyH),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

@@ -1,4 +1,4 @@
-package repository
+package vacancy
 
 import (
 	"testing"
@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"vacancy_service/internal/db"
-	"vacancy_service/internal/model"
 )
 
 func TestVacancyFromGetRowMapsCompanyAndTimestamps(t *testing.T) {
@@ -15,20 +14,21 @@ func TestVacancyFromGetRowMapsCompanyAndTimestamps(t *testing.T) {
 	updatedAt := pgtype.Timestamp{Time: time.Date(2024, 1, 3, 4, 5, 6, 0, time.UTC), Valid: true}
 
 	row := db.GetVacancyByIDRow{
-		ID:             42,
-		Title:          "Backend Engineer",
-		Description:    "Build services",
-		CompanyId:      7,
-		Salary:         180000,
-		Link:           "https://example.com/job",
-		City:           "Remote",
-		CreatedAt:      createdAt,
-		UpdatedAt:      updatedAt,
-		CompanyTableID: 7,
-		CompanyName:    "Acme",
+		Vacancy: db.Vacancy{
+			ID:          42,
+			Title:       "Backend Engineer",
+			Description: "Build services",
+			CompanyId:   7,
+			Salary:      180000,
+			Link:        "https://example.com/job",
+			City:        "Remote",
+			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
+		},
+		Company: db.Company{ID: 7, Name: "Acme"},
 	}
 
-	vacancy := vacancyFromGetRow(row)
+	vacancy := vacancyFromJoinRow(row.Vacancy, row.Company)
 
 	if vacancy.ID != 42 {
 		t.Fatalf("expected id 42, got %d", vacancy.ID)
@@ -69,13 +69,5 @@ func TestVacancyFromUpsertRowUsesDomainShape(t *testing.T) {
 	}
 	if vacancy.Title != "DevOps" {
 		t.Fatalf("expected title %q, got %q", "DevOps", vacancy.Title)
-	}
-}
-
-func TestVacancyInputValidation(t *testing.T) {
-	input := model.VacancyInput{Title: "", Description: "Some", Salary: 100, Company: &model.Company{Name: "Acme"}, City: "Moscow", Link: "https://example.com"}
-
-	if err := input.Validate(); err == nil {
-		t.Fatal("expected validation error for empty title")
 	}
 }

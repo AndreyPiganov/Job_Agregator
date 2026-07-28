@@ -1,76 +1,67 @@
-package service
+package vacancy
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 
 	domain "vacancy_service/internal/domain"
-	"vacancy_service/internal/repository"
 )
 
-type VacancyStore interface {
+type repository interface {
 	List(ctx context.Context, offset, limit int) ([]domain.Vacancy, error)
 	GetByID(ctx context.Context, id int64) (domain.Vacancy, error)
-	Create(ctx context.Context, input domain.VacancyInput) (domain.Vacancy, error)
-	CreateBatch(ctx context.Context, inputs []domain.VacancyInput) ([]domain.Vacancy, error)
+	Create(ctx context.Context, input CreateVacancyInput) (domain.Vacancy, error)
+	CreateBatch(ctx context.Context, inputs []CreateVacancyInput) ([]domain.Vacancy, error)
 	ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error)
 	ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error)
 }
 
-type VacancyService struct {
-	repo   VacancyStore
-	logger *slog.Logger
+// CreateVacancyInput is a service command, independent from HTTP JSON and SQL.
+type CreateVacancyInput struct {
+	Title       string
+	Description string
+	Salary      float64
+	CompanyName string
+	City        string
+	Link        string
 }
 
-var (
-	ErrVacancyNotFound = errors.New("vacancy not found")
-)
-
-func NewVacancyService(repo VacancyStore, logger *slog.Logger) *VacancyService {
-	return &VacancyService{repo: repo, logger: logger}
+// Pagination is the normalized input for listing vacancies.
+type Pagination struct {
+	Page         int
+	ItemsPerPage int
 }
 
-func (s *VacancyService) Health() map[string]string {
+type Service struct{ repo repository }
+
+func NewService(repo repository) *Service {
+	return &Service{repo: repo}
+}
+
+func (s *Service) Health() map[string]string {
 	return map[string]string{"status": "ok"}
 }
 
-func (s *VacancyService) List(ctx context.Context, d domain.Pagination) ([]domain.Vacancy, error) {
+func (s *Service) List(ctx context.Context, d Pagination) ([]domain.Vacancy, error) {
 	offset := (d.Page - 1) * d.ItemsPerPage
 	return s.repo.List(ctx, offset, d.ItemsPerPage)
 }
 
-func (s *VacancyService) GetByID(ctx context.Context, id int64) (domain.Vacancy, error) {
-	vacancy, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return domain.Vacancy{}, ErrVacancyNotFound
-		}
-		return domain.Vacancy{}, err
-	}
-	return vacancy, nil
+func (s *Service) GetByID(ctx context.Context, id int64) (domain.Vacancy, error) {
+	return s.repo.GetByID(ctx, id)
 }
 
-func (s *VacancyService) Create(ctx context.Context, input domain.VacancyInput) (domain.Vacancy, error) {
-	if err := input.Validate(); err != nil {
-		return domain.Vacancy{}, err
-	}
+func (s *Service) Create(ctx context.Context, input CreateVacancyInput) (domain.Vacancy, error) {
 	return s.repo.Create(ctx, input)
 }
 
-func (s *VacancyService) CreateBatch(ctx context.Context, inputs []domain.VacancyInput) ([]domain.Vacancy, error) {
-	for _, input := range inputs {
-		if err := input.Validate(); err != nil {
-			return nil, err
-		}
-	}
+func (s *Service) CreateBatch(ctx context.Context, inputs []CreateVacancyInput) ([]domain.Vacancy, error) {
 	return s.repo.CreateBatch(ctx, inputs)
 }
 
-func (s *VacancyService) ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error) {
+func (s *Service) ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error) {
 	return s.repo.ListByCompany(ctx, companyName)
 }
 
-func (s *VacancyService) ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error) {
+func (s *Service) ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error) {
 	return s.repo.ListBySalaryRange(ctx, minSalary, maxSalary)
 }

@@ -1,9 +1,9 @@
-package repository
+package vacancy
 
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,71 +12,65 @@ import (
 
 	"vacancy_service/internal/db"
 	domain "vacancy_service/internal/domain"
-)
-
-var (
-	ErrNotFound = errors.New("not found")
+	service "vacancy_service/internal/service"
 )
 
 // VacancyRepository is the boundary between application code and database code.
 //
-// HTTP handlers call repository methods. The repository then calls sqlc-generated
-// methods from internal/db. This keeps SQL details out of handlers.
-type VacancyRepository struct {
+// Services call repository methods. The repository then calls sqlc-generated
+// methods from internal/db. This keeps SQL details out of higher layers.
+type repository struct {
 	pool    *pgxpool.Pool
 	queries *db.Queries
 }
 
-func NewVacancyRepository(pool *pgxpool.Pool) *VacancyRepository {
-	return &VacancyRepository{
+func NewVacancyRepository(pool *pgxpool.Pool) *repository {
+	return &repository{
 		pool:    pool,
 		queries: db.New(pool),
 	}
 }
 
-func (r *VacancyRepository) List(ctx context.Context, offset, limit int) ([]domain.Vacancy, error) {
+func (r *repository) List(ctx context.Context, offset, limit int) ([]domain.Vacancy, error) {
 	rows, err := r.queries.ListVacancies(ctx, db.ListVacanciesParams{
 		Limit:  int32(limit),
 		Offset: int32(offset),
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list vacancies: %w", err)
 	}
 
 	vacancies := make([]domain.Vacancy, 0, len(rows))
 	for _, row := range rows {
-		vacancies = append(vacancies, toDomainVacancy(row))
+		vacancies = append(vacancies, vacancyFromJoinRow(row.Vacancy, row.Company))
 	}
 	return vacancies, nil
 }
 
-func (r *VacancyRepository) GetByID(ctx context.Context, id int64) (domain.Vacancy, error) {
+func (r *repository) GetByID(ctx context.Context, id int64) (domain.Vacancy, error) {
 	row, err := r.queries.GetVacancyByID(ctx, int32(id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Vacancy{}, ErrNotFound
+		return domain.Vacancy{}, domain.ErrVacancyNotFound
 	}
 	if err != nil {
-		return domain.Vacancy{}, err
+		return domain.Vacancy{}, fmt.Errorf("get vacancy by id %d: %w", id, err)
 	}
 
-	return vacancyFromGetRow(row), nil
+	return vacancyFromJoinRow(row.Vacancy, row.Company), nil
 }
 
-func (r *VacancyRepository) Create(ctx context.Context, input domain.VacancyInput) (domain.Vacancy, error) {
-	vacancies, err := r.CreateBatch(ctx, []domain.VacancyInput{input})
+func (r *repository) Create(ctx context.Context, input service.CreateVacancyInput) (domain.Vacancy, error) {
+	vacancies, err := r.CreateBatch(ctx, []service.CreateVacancyInput{input})
 	if err != nil {
 		return domain.Vacancy{}, err
-	}
-	if len(vacancies) == 0 {
-		return domain.Vacancy{}, ErrNotFound
 	}
 	return vacancies[0], nil
 }
 
-func (r *VacancyRepository) CreateBatch(ctx context.Context, inputs []domain.VacancyInput) ([]domain.Vacancy, error) {
+func (r *repository) CreateBatch(ctx context.Context, inputs []service.CreateVacancyInput) ([]domain.Vacancy, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin vacancy batch transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -84,17 +78,9 @@ func (r *VacancyRepository) CreateBatch(ctx context.Context, inputs []domain.Vac
 	vacancies := make([]domain.Vacancy, 0, len(inputs))
 
 	for _, input := range inputs {
-		companyName := ""
-		if input.Company != nil {
-			companyName = strings.TrimSpace(input.Company.Name)
-		}
-		if companyName == "" {
-			return nil, errors.New("company name is required")
-		}
-
-		companyID, err := queries.UpsertCompany(ctx, companyName)
+		companyID, err := queries.UpsertCompany(ctx, input.CompanyName)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("upsert company: %w", err)
 		}
 
 		row, err := queries.UpsertVacancy(ctx, db.UpsertVacancyParams{
@@ -106,66 +92,50 @@ func (r *VacancyRepository) CreateBatch(ctx context.Context, inputs []domain.Vac
 			City:        input.City,
 		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("upsert vacancy: %w", err)
 		}
 
 		vacancies = append(vacancies, vacancyFromUpsertRow(row))
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("commit vacancy batch transaction: %w", err)
 	}
 
 	return vacancies, nil
 }
 
-func (r *VacancyRepository) ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error) {
+func (r *repository) ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error) {
 	rows, err := r.queries.ListVacanciesByCompany(ctx, companyName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list vacancies by company: %w", err)
 	}
 
 	vacancies := make([]domain.Vacancy, 0, len(rows))
 	for _, row := range rows {
-		vacancies = append(vacancies, vacancyFromCompanyRow(row))
+		vacancies = append(vacancies, vacancyFromJoinRow(row.Vacancy, row.Company))
 	}
 
 	return vacancies, nil
 }
 
-func (r *VacancyRepository) ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error) {
+func (r *repository) ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error) {
 	rows, err := r.queries.ListVacanciesBySalaryRange(ctx, db.ListVacanciesBySalaryRangeParams{
 		Salary:   minSalary,
 		Salary_2: maxSalary,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list vacancies by salary range: %w", err)
 	}
 
 	vacancies := make([]domain.Vacancy, 0, len(rows))
 	for _, row := range rows {
-		vacancies = append(vacancies, vacancyFromSalaryRow(row))
+		vacancies = append(vacancies, vacancyFromJoinRow(row.Vacancy, row.Company))
 	}
 
 	return vacancies, nil
 }
 
-func newVacancy(id int64, title, desc string, companyID int64, salary float64, link, city string, createdAt, updatedAt time.Time, company *domain.Company) domain.Vacancy {
-	return domain.Vacancy{
-		ID:          id,
-		Title:       title,
-		Description: desc,
-		CompanyID:   companyID,
-		Salary:      salary,
-		Link:        link,
-		City:        city,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-		Company:     company, // может быть nil
-	}
-}
-
-// internal/repository/mappers.go
 func toDomainVacancy(v db.Vacancy) domain.Vacancy {
 	return domain.Vacancy{
 		ID:          int64(v.ID),
@@ -175,96 +145,19 @@ func toDomainVacancy(v db.Vacancy) domain.Vacancy {
 		Salary:      v.Salary,
 		Link:        v.Link,
 		City:        v.City,
-		CreatedAt:   v.CreatedAt.Time, // если используется pgtype.Timestamp
-		UpdatedAt:   v.UpdatedAt.Time,
+		CreatedAt:   timeFromPgTimestamp(v.CreatedAt),
+		UpdatedAt:   timeFromPgTimestamp(v.UpdatedAt),
 	}
 }
 
 // для GetVacancyByID и ListVacancies (где компания всегда есть)
-func vacancyFromJoinRow(row interface {
-	GetVacancy() db.Vacancy
-	GetCompany() db.Company
-}) domain.Vacancy {
-	v := row.GetVacancy()
-	c := row.GetCompany()
+func vacancyFromJoinRow(v db.Vacancy, c db.Company) domain.Vacancy {
 	result := toDomainVacancy(v)
 	result.Company = &domain.Company{
 		ID:   int64(c.ID),
 		Name: c.Name,
 	}
 	return result
-}
-
-// func vacancyFromGetRow(row db.GetVacancyByIDRow) domain.Vacancy {
-// 	vacancy := domain.Vacancy{
-// 		ID:          int64(row.ID),
-// 		Title:       row.Title,
-// 		Description: row.Description,
-// 		CompanyID:   int64(row.CompanyId),
-// 		Salary:      row.Salary,
-// 		Link:        row.Link,
-// 		City:        row.City,
-// 		CreatedAt:   timeFromPgTimestamp(row.CreatedAt),
-// 		UpdatedAt:   timeFromPgTimestamp(row.UpdatedAt),
-// 	}
-// 	if row.CompanyName != "" {
-// 		vacancy.Company = &domain.Company{ID: int64(row.CompanyTableID), Name: row.CompanyName}
-// 	}
-// 	return vacancy
-// }
-
-func vacancyFromListRow(row db.ListVacanciesRow) domain.Vacancy {
-	vacancy := domain.Vacancy{
-		ID:          int64(row.ID),
-		Title:       row.Title,
-		Description: row.Description,
-		CompanyID:   int64(row.CompanyId),
-		Salary:      row.Salary,
-		Link:        row.Link,
-		City:        row.City,
-		CreatedAt:   timeFromPgTimestamp(row.CreatedAt),
-		UpdatedAt:   timeFromPgTimestamp(row.UpdatedAt),
-	}
-	if row.CompanyName != "" {
-		vacancy.Company = &domain.Company{ID: int64(row.CompanyTableID), Name: row.CompanyName}
-	}
-	return vacancy
-}
-
-func vacancyFromCompanyRow(row db.ListVacanciesByCompanyRow) domain.Vacancy {
-	vacancy := domain.Vacancy{
-		ID:          int64(row.ID),
-		Title:       row.Title,
-		Description: row.Description,
-		CompanyID:   int64(row.CompanyId),
-		Salary:      row.Salary,
-		Link:        row.Link,
-		City:        row.City,
-		CreatedAt:   timeFromPgTimestamp(row.CreatedAt),
-		UpdatedAt:   timeFromPgTimestamp(row.UpdatedAt),
-	}
-	if row.CompanyName != "" {
-		vacancy.Company = &domain.Company{ID: int64(row.CompanyTableID), Name: row.CompanyName}
-	}
-	return vacancy
-}
-
-func vacancyFromSalaryRow(row db.ListVacanciesBySalaryRangeRow) domain.Vacancy {
-	vacancy := domain.Vacancy{
-		ID:          int64(row.ID),
-		Title:       row.Title,
-		Description: row.Description,
-		CompanyID:   int64(row.CompanyId),
-		Salary:      row.Salary,
-		Link:        row.Link,
-		City:        row.City,
-		CreatedAt:   timeFromPgTimestamp(row.CreatedAt),
-		UpdatedAt:   timeFromPgTimestamp(row.UpdatedAt),
-	}
-	if row.CompanyName != "" {
-		vacancy.Company = &domain.Company{ID: int64(row.CompanyTableID), Name: row.CompanyName}
-	}
-	return vacancy
 }
 
 func vacancyFromUpsertRow(row db.UpsertVacancyRow) domain.Vacancy {
