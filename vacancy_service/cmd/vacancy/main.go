@@ -49,7 +49,7 @@ func main() {
 
 	// main wires concrete implementations together.
 	// The dependency flow is: HTTP handler -> service -> repository -> database.
-	vacancyR := vacancyRepository.NewVacancyRepository(pool)
+	vacancyR := vacancyRepository.NewRepository(pool)
 	vacancyS := vacancyService.NewService(vacancyR)
 	vacancyH := vacancyHandler.NewHandler(vacancyS, logger)
 

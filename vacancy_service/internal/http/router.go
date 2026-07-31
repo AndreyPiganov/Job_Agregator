@@ -18,6 +18,7 @@ type VacancyHandler interface {
 	CreateBatch(http.ResponseWriter, *http.Request)
 	ListByCompany(http.ResponseWriter, *http.Request)
 	ListBySalary(http.ResponseWriter, *http.Request)
+	ListByFilterParams(http.ResponseWriter, *http.Request)
 }
 
 func NewRouter(vacancyHandler VacancyHandler) http.Handler {
@@ -41,6 +42,7 @@ func RegisterRoutes(r chi.Router, vacancyHandler VacancyHandler) {
 	r.Get("/health", vacancyHandler.Health)
 	r.Route("/vacancies", func(r chi.Router) {
 		r.Get("/", vacancyHandler.List)
+		r.Get("/filter", vacancyHandler.ListByFilterParams)
 		r.Post("/", vacancyHandler.Create)
 		r.Post("/batch", vacancyHandler.CreateBatch)
 		r.Get("/salary", vacancyHandler.ListBySalary)

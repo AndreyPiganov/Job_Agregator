@@ -24,7 +24,7 @@ type repository struct {
 	queries *db.Queries
 }
 
-func NewVacancyRepository(pool *pgxpool.Pool) *repository {
+func NewRepository(pool *pgxpool.Pool) *repository {
 	return &repository{
 		pool:    pool,
 		queries: db.New(pool),
@@ -136,6 +136,29 @@ func (r *repository) ListBySalaryRange(ctx context.Context, minSalary, maxSalary
 	return vacancies, nil
 }
 
+func (r *repository) ListByFilterParams(ctx context.Context, whereClause string, args ...interface{}) ([]domain.Vacancy, error) {
+	query := `SELECT vacancy.* FROM "Vacancy" vacancy 
+              JOIN "Company" company ON company."id" = vacancy."companyId" `
+	if whereClause != "" {
+		query += whereClause
+	}
+	query += ` ORDER BY vacancy."createdAt" DESC, vacancy."id" DESC`
+
+	fmt.Println(query)
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query error: %w", err)
+	}
+	defer rows.Close()
+
+	vacancies, err := pgx.CollectRows(rows, pgx.RowToStructByName[domain.Vacancy])
+	if err != nil {
+		return nil, fmt.Errorf("collect rows error: %w", err)
+	}
+
+	return vacancies, nil
+}
+
 func toDomainVacancy(v db.Vacancy) domain.Vacancy {
 	return domain.Vacancy{
 		ID:          int64(v.ID),
@@ -150,7 +173,6 @@ func toDomainVacancy(v db.Vacancy) domain.Vacancy {
 	}
 }
 
-// для GetVacancyByID и ListVacancies (где компания всегда есть)
 func vacancyFromJoinRow(v db.Vacancy, c db.Company) domain.Vacancy {
 	result := toDomainVacancy(v)
 	result.Company = &domain.Company{

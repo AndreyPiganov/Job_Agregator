@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -25,6 +26,7 @@ type Service interface {
 	CreateBatch(ctx context.Context, inputs []service.CreateVacancyInput) ([]domain.Vacancy, error)
 	ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error)
 	ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error)
+	ListByFilterParams(ctx context.Context, filter domain.VacancyFilter) ([]domain.Vacancy, error)
 }
 
 type handler struct {
@@ -211,6 +213,58 @@ func (h *handler) ListBySalary(w http.ResponseWriter, r *http.Request) {
 	vacancies, err := h.service.ListBySalaryRange(r.Context(), minSalary, maxSalary)
 	if err != nil {
 		h.logger.Error("failed to list vacancies by salary", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not fetch vacancies")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vacancies)
+}
+
+func (h *handler) ListByFilterParams(w http.ResponseWriter, r *http.Request) {
+	page, err := queryInt(r, "page", 1)
+	if err != nil || page < 1 {
+		writeError(w, http.StatusBadRequest, "page must be a positive integer")
+		return
+	}
+	limit, err := queryInt(r, "itemsPerPage", 10)
+	if err != nil || limit < 1 {
+		writeError(w, http.StatusBadRequest, "itemsPerPage must be a positive integer")
+		return
+	}
+
+	maxSalary, err := queryInt(r, "maxSalary", 0)
+	if err != nil || limit < 1 {
+		writeError(w, http.StatusBadRequest, "maxSalary must be a positive integer")
+		return
+	}
+
+	minSalary, err := queryInt(r, "minSalary", 0)
+	if err != nil || limit < 1 {
+		writeError(w, http.StatusBadRequest, "minSalary must be a positive integer")
+		return
+	}
+
+	p := service.Pagination{
+		Page:         page,
+		ItemsPerPage: limit,
+	}
+	if p.ItemsPerPage > 100 {
+		p.ItemsPerPage = 100
+	}
+
+	filter := domain.VacancyFilter{
+		Keyword: r.URL.Query().Get("q"),
+		// Cities:       r.URL.Query()["city"],
+		MaxSalary:    maxSalary,
+		MinSalary:    minSalary,
+		Page:         p.Page,
+		ItemsPerPage: p.ItemsPerPage,
+	}
+	fmt.Println(filter)
+
+	vacancies, err := h.service.ListByFilterParams(r.Context(), filter)
+	if err != nil {
+		h.logger.Error("Failed to list vacancies by filter params", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not fetch vacancies")
 		return
 	}
