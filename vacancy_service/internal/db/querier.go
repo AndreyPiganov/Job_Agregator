@@ -9,15 +9,76 @@ import (
 )
 
 type Querier interface {
+	//GetVacancyByID
+	//
+	//  SELECT
+	//      vacancy.id, vacancy.title, vacancy.description, vacancy."companyId", vacancy.salary, vacancy.link, vacancy.city, vacancy."createdAt", vacancy."updatedAt",
+	//      company.id, company.name
+	//  FROM "Vacancy" vacancy
+	//  JOIN "Company" company ON company."id" = vacancy."companyId"
+	//  WHERE vacancy."id" = $1
 	GetVacancyByID(ctx context.Context, id int32) (GetVacancyByIDRow, error)
 	// sqlc reads this file and generates Go methods from each annotated query.
 	// Example: "-- name: ListVacancies :many" becomes queries.ListVacancies(ctx, params).
+	//
+	//
+	//  SELECT
+	//      vacancy.id, vacancy.title, vacancy.description, vacancy."companyId", vacancy.salary, vacancy.link, vacancy.city, vacancy."createdAt", vacancy."updatedAt",
+	//      company.id, company.name
+	//  FROM "Vacancy" vacancy
+	//  JOIN "Company" company ON company."id" = vacancy."companyId"
+	//  ORDER BY vacancy."createdAt" DESC, vacancy."id" DESC
+	//  LIMIT $1 OFFSET $2
 	ListVacancies(ctx context.Context, arg ListVacanciesParams) ([]ListVacanciesRow, error)
+	//ListVacanciesByCompany
+	//
+	//  SELECT
+	//      vacancy.id, vacancy.title, vacancy.description, vacancy."companyId", vacancy.salary, vacancy.link, vacancy.city, vacancy."createdAt", vacancy."updatedAt",
+	//      company.id, company.name
+	//  FROM "Vacancy" vacancy
+	//  JOIN "Company" company ON company."id" = vacancy."companyId"
+	//  WHERE company."name" = $1
+	//  ORDER BY vacancy."createdAt" DESC, vacancy."id" DESC
 	ListVacanciesByCompany(ctx context.Context, name string) ([]ListVacanciesByCompanyRow, error)
+	//ListVacanciesBySalaryRange
+	//
+	//  SELECT
+	//      vacancy.id, vacancy.title, vacancy.description, vacancy."companyId", vacancy.salary, vacancy.link, vacancy.city, vacancy."createdAt", vacancy."updatedAt",
+	//      company.id, company.name
+	//  FROM "Vacancy" vacancy
+	//  JOIN "Company" company ON company."id" = vacancy."companyId"
+	//  WHERE vacancy."salary" >= $1 AND vacancy."salary" <= $2
+	//  ORDER BY vacancy."salary" DESC, vacancy."createdAt" DESC
 	ListVacanciesBySalaryRange(ctx context.Context, arg ListVacanciesBySalaryRangeParams) ([]ListVacanciesBySalaryRangeRow, error)
+	//UpsertCompany
+	//
+	//  INSERT INTO "Company" ("name")
+	//  VALUES ($1)
+	//  ON CONFLICT ("name") DO UPDATE SET "name" = EXCLUDED."name"
+	//  RETURNING "id"
 	UpsertCompany(ctx context.Context, name string) (int32, error)
 	// Upsert means: insert if link is new, update if link already exists.
 	// This is important for parser imports where the same vacancy can be seen repeatedly.
+	//
+	//  INSERT INTO "Vacancy" ("title", "description", "companyId", "salary", "link", "city", "updatedAt")
+	//  VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+	//  ON CONFLICT ("link") DO UPDATE SET
+	//      "title" = EXCLUDED."title",
+	//      "description" = EXCLUDED."description",
+	//      "companyId" = EXCLUDED."companyId",
+	//      "salary" = EXCLUDED."salary",
+	//      "city" = EXCLUDED."city",
+	//      "updatedAt" = CURRENT_TIMESTAMP
+	//  RETURNING
+	//      "id" AS id,
+	//      "title" AS title,
+	//      "description" AS description,
+	//      "companyId" AS company_id,
+	//      "salary" AS salary,
+	//      "link" AS link,
+	//      "city" AS city,
+	//      "createdAt" AS created_at,
+	//      "updatedAt" AS updated_at
 	UpsertVacancy(ctx context.Context, arg UpsertVacancyParams) (UpsertVacancyRow, error)
 }
 

@@ -2,37 +2,67 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: postgres
-    restart: always
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=root
-      - POSTGRES_PASSWORD=example
-      - POSTGRES_DB=job
-      - PGDATA=/data/postgres
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-example}
+      POSTGRES_DB: ${POSTGRES_DB:-job}
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5425:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5425}:5432"
     volumes:
       - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - job-network
+
   vacancy_service:
     container_name: vacancy_service
-    restart: always
+    restart: unless-stopped
+    init: true
     build:
       context: ./vacancy_service
       dockerfile: Dockerfile_dev
-    expose:
-      - "5003"
     ports:
-      - "127.0.0.1:5003:5003"
+      - "127.0.0.1:${VACANCY_PORT:-5003}:5003"
     volumes:
       - ./vacancy_service:/app
-      - ./var/log:/var/job/log
+      - ./var/log/vacancy_service:/var/log/vacancy-service
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
     environment:
-      - PORT=5003
-      - DATABASE_URL=postgresql://root:example@postgres:5432/job?schema=public
-      - LOG_LEVEL=debug
+      PORT: "5003"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=public
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      LOG_DIR: /var/log/vacancy-service
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5003/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - job-network
+
 networks:
-  network:
+  job-network:
     driver: bridge
+
 volumes:
   postgres:
+  go-mod-cache:
+  go-build-cache:

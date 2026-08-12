@@ -35,5 +35,5 @@ type Vacancy struct {
 	City        string    `json:"city"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
-	Company     *Company  `json:"company,omitempty" db:"-"`
+	Company     *Company  `json:"company,omitempty"`
 }

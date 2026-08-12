@@ -1,9 +1,10 @@
-package vacancy
+package repository
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,6 +23,19 @@ import (
 type repository struct {
 	pool    *pgxpool.Pool
 	queries *db.Queries
+}
+
+type vacancyFilterQueryParams struct {
+	hasMinSalary        bool
+	minSalary           float64
+	hasMaxSalary        bool
+	maxSalary           float64
+	hasCreatedAfter     bool
+	createdAfter        time.Time
+	cities              []string
+	searchByTitle       bool
+	searchByDescription bool
+	searchByCompanyName bool
 }
 
 func NewRepository(pool *pgxpool.Pool) *repository {
@@ -72,7 +86,11 @@ func (r *repository) CreateBatch(ctx context.Context, inputs []service.CreateVac
 	if err != nil {
 		return nil, fmt.Errorf("begin vacancy batch transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}()
 
 	queries := r.queries.WithTx(tx)
 	vacancies := make([]domain.Vacancy, 0, len(inputs))
@@ -95,7 +113,9 @@ func (r *repository) CreateBatch(ctx context.Context, inputs []service.CreateVac
 			return nil, fmt.Errorf("upsert vacancy: %w", err)
 		}
 
-		vacancies = append(vacancies, vacancyFromUpsertRow(row))
+		vacancy := vacancyFromUpsertRow(row)
+		vacancy.Company = &domain.Company{ID: int64(companyID), Name: input.CompanyName}
+		vacancies = append(vacancies, vacancy)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -105,58 +125,135 @@ func (r *repository) CreateBatch(ctx context.Context, inputs []service.CreateVac
 	return vacancies, nil
 }
 
-func (r *repository) ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error) {
-	rows, err := r.queries.ListVacanciesByCompany(ctx, companyName)
+func (r *repository) ListByFilterParams(ctx context.Context, filter domain.VacancyFilter, offset, limit int) ([]domain.Vacancy, error) {
+	const queryPrefix = `
+SELECT
+    vacancy.id,
+    vacancy.title,
+    vacancy.description,
+    vacancy."companyId",
+    vacancy.salary,
+    vacancy.link,
+    vacancy.city,
+    vacancy."createdAt",
+    vacancy."updatedAt",
+    company.id,
+    company.name
+FROM "Vacancy" vacancy
+JOIN "Company" company ON company.id = vacancy."companyId"
+WHERE (NOT $1::boolean OR vacancy.salary >= $2::double precision)
+  AND (NOT $3::boolean OR vacancy.salary <= $4::double precision)
+  AND (NOT $5::boolean OR lower(vacancy.city) = ANY($6::text[]))
+  AND (
+      $7::text = ''
+      OR ($8::boolean AND vacancy.title ILIKE '%' || $7 || '%')
+      OR ($9::boolean AND vacancy.description ILIKE '%' || $7 || '%')
+      OR ($10::boolean AND company.name ILIKE '%' || $7 || '%')
+  )
+  AND (NOT $11::boolean OR vacancy."createdAt" >= $12::timestamp)
+ORDER BY `
+
+	params := newVacancyFilterQueryParams(filter)
+	query := queryPrefix + vacancyOrderBy(filter.Sort) + `
+LIMIT $13 OFFSET $14`
+
+	rows, err := r.pool.Query(
+		ctx,
+		query,
+		params.hasMinSalary,
+		params.minSalary,
+		params.hasMaxSalary,
+		params.maxSalary,
+		len(params.cities) > 0,
+		params.cities,
+		filter.Keyword,
+		params.searchByTitle,
+		params.searchByDescription,
+		params.searchByCompanyName,
+		params.hasCreatedAfter,
+		params.createdAfter,
+		limit,
+		offset,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("list vacancies by company: %w", err)
-	}
-
-	vacancies := make([]domain.Vacancy, 0, len(rows))
-	for _, row := range rows {
-		vacancies = append(vacancies, vacancyFromJoinRow(row.Vacancy, row.Company))
-	}
-
-	return vacancies, nil
-}
-
-func (r *repository) ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error) {
-	rows, err := r.queries.ListVacanciesBySalaryRange(ctx, db.ListVacanciesBySalaryRangeParams{
-		Salary:   minSalary,
-		Salary_2: maxSalary,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list vacancies by salary range: %w", err)
-	}
-
-	vacancies := make([]domain.Vacancy, 0, len(rows))
-	for _, row := range rows {
-		vacancies = append(vacancies, vacancyFromJoinRow(row.Vacancy, row.Company))
-	}
-
-	return vacancies, nil
-}
-
-func (r *repository) ListByFilterParams(ctx context.Context, whereClause string, args ...interface{}) ([]domain.Vacancy, error) {
-	query := `SELECT vacancy.* FROM "Vacancy" vacancy 
-              JOIN "Company" company ON company."id" = vacancy."companyId" `
-	if whereClause != "" {
-		query += whereClause
-	}
-	query += ` ORDER BY vacancy."createdAt" DESC, vacancy."id" DESC`
-
-	fmt.Println(query)
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query error: %w", err)
+		return nil, fmt.Errorf("list vacancies by filter: %w", err)
 	}
 	defer rows.Close()
 
-	vacancies, err := pgx.CollectRows(rows, pgx.RowToStructByName[domain.Vacancy])
-	if err != nil {
-		return nil, fmt.Errorf("collect rows error: %w", err)
+	vacancies := make([]domain.Vacancy, 0)
+	for rows.Next() {
+		var vacancy db.Vacancy
+		var company db.Company
+		if err := rows.Scan(
+			&vacancy.ID,
+			&vacancy.Title,
+			&vacancy.Description,
+			&vacancy.CompanyId,
+			&vacancy.Salary,
+			&vacancy.Link,
+			&vacancy.City,
+			&vacancy.CreatedAt,
+			&vacancy.UpdatedAt,
+			&company.ID,
+			&company.Name,
+		); err != nil {
+			return nil, fmt.Errorf("scan filtered vacancy: %w", err)
+		}
+
+		vacancies = append(vacancies, vacancyFromJoinRow(vacancy, company))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate filtered vacancies: %w", err)
 	}
 
 	return vacancies, nil
+}
+
+func newVacancyFilterQueryParams(filter domain.VacancyFilter) vacancyFilterQueryParams {
+	params := vacancyFilterQueryParams{
+		cities:              append([]string(nil), filter.Cities...),
+		searchByTitle:       searchFieldEnabled(filter.SearchFields, domain.VacancySearchTitle),
+		searchByDescription: searchFieldEnabled(filter.SearchFields, domain.VacancySearchDescription),
+		searchByCompanyName: searchFieldEnabled(filter.SearchFields, domain.VacancySearchCompanyName),
+	}
+	for index := range params.cities {
+		params.cities[index] = strings.ToLower(params.cities[index])
+	}
+	if filter.MinSalary != nil {
+		params.hasMinSalary = true
+		params.minSalary = *filter.MinSalary
+	}
+	if filter.MaxSalary != nil {
+		params.hasMaxSalary = true
+		params.maxSalary = *filter.MaxSalary
+	}
+	if filter.CreatedAfter != nil {
+		params.hasCreatedAfter = true
+		params.createdAfter = *filter.CreatedAfter
+	}
+	return params
+}
+
+func vacancyOrderBy(sort domain.VacancySort) string {
+	switch sort {
+	case domain.VacancySortDateAsc:
+		return `vacancy."createdAt" ASC, vacancy.id ASC`
+	case domain.VacancySortSalaryDesc:
+		return `vacancy.salary DESC, vacancy."createdAt" DESC, vacancy.id DESC`
+	case domain.VacancySortSalaryAsc:
+		return `vacancy.salary ASC, vacancy."createdAt" DESC, vacancy.id DESC`
+	default:
+		return `vacancy."createdAt" DESC, vacancy.id DESC`
+	}
+}
+
+func searchFieldEnabled(fields []domain.VacancySearchField, wanted domain.VacancySearchField) bool {
+	for _, field := range fields {
+		if field == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func toDomainVacancy(v db.Vacancy) domain.Vacancy {

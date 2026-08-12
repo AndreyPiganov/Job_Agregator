@@ -1,25 +1,25 @@
-# Используем официальный образ Go в качестве базового
-FROM golang:1.25 AS builder
+FROM golang:1.25-alpine AS builder
 
-# Устанавливаем рабочую директорию внутри контейнера
-WORKDIR /app
+WORKDIR /src
 
-# Копируем файлы зависимостей (go.mod, go.sum) первыми
 COPY go.mod go.sum ./
-
-# Загружаем зависимости — это создаст отдельный слой,
-# и при изменении кода или зависимостей следующая сборка будет быстрой
 RUN go mod download
 
-# Копируем весь исходный код
 COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/vacancy-service ./cmd/vacancy
 
-# Собираем приложение
-# Флаг CGO_ENABLED=0 собирает бинарник статически (все зависимости внутри), то позволяет запускать его на очень минималистичных образах
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -o main ./cmd/vacancy
+FROM alpine:3.22
 
-# Указываем порт, на котором приложение будет слушать
-EXPOSE 8080
+RUN apk add --no-cache ca-certificates su-exec tzdata \
+    && addgroup -S app \
+    && adduser -S -G app app \
+    && mkdir -p /var/log/vacancy-service \
+    && chown -R app:app /var/log/vacancy-service
 
-# Задаём команду для запуска контейнера
-CMD ["./main"]
+COPY --from=builder /out/vacancy-service /usr/local/bin/vacancy-service
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE 5003
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/vacancy-service"]

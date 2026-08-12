@@ -5,7 +5,9 @@ go 1.25.0
 require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-playground/validator/v10 v10.30.3
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (

@@ -1,9 +1,8 @@
-package vacancy
+package service
 
 import (
 	"context"
-	"fmt"
-	"strings"
+	"time"
 
 	domain "vacancy_service/internal/domain"
 )
@@ -13,9 +12,7 @@ type repository interface {
 	GetByID(ctx context.Context, id int64) (domain.Vacancy, error)
 	Create(ctx context.Context, input CreateVacancyInput) (domain.Vacancy, error)
 	CreateBatch(ctx context.Context, inputs []CreateVacancyInput) ([]domain.Vacancy, error)
-	ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error)
-	ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error)
-	ListByFilterParams(ctx context.Context, filter string, args ...interface{}) ([]domain.Vacancy, error)
+	ListByFilterParams(ctx context.Context, filter domain.VacancyFilter, offset, limit int) ([]domain.Vacancy, error)
 }
 
 // CreateVacancyInput is a service command, independent from HTTP JSON and SQL.
@@ -28,25 +25,19 @@ type CreateVacancyInput struct {
 	Link        string
 }
 
-// Pagination is the normalized input for listing vacancies.
-type Pagination struct {
-	Page         int
-	ItemsPerPage int
+type Service struct {
+	repo repository
+	now  func() time.Time
 }
-
-type Service struct{ repo repository }
 
 func NewService(repo repository) *Service {
-	return &Service{repo: repo}
+	return &Service{repo: repo, now: time.Now}
 }
 
-func (s *Service) Health() map[string]string {
-	return map[string]string{"status": "ok"}
-}
-
-func (s *Service) List(ctx context.Context, d Pagination) ([]domain.Vacancy, error) {
-	offset := (d.Page - 1) * d.ItemsPerPage
-	return s.repo.List(ctx, offset, d.ItemsPerPage)
+func (s *Service) List(ctx context.Context, pagination domain.Pagination) ([]domain.Vacancy, error) {
+	pagination.Normalize()
+	offset := (pagination.Page - 1) * pagination.ItemsPerPage
+	return s.repo.List(ctx, offset, pagination.ItemsPerPage)
 }
 
 func (s *Service) GetByID(ctx context.Context, id int64) (domain.Vacancy, error) {
@@ -61,47 +52,26 @@ func (s *Service) CreateBatch(ctx context.Context, inputs []CreateVacancyInput) 
 	return s.repo.CreateBatch(ctx, inputs)
 }
 
-func (s *Service) ListByCompany(ctx context.Context, companyName string) ([]domain.Vacancy, error) {
-	return s.repo.ListByCompany(ctx, companyName)
-}
-
-func (s *Service) ListBySalaryRange(ctx context.Context, minSalary, maxSalary float64) ([]domain.Vacancy, error) {
-	return s.repo.ListBySalaryRange(ctx, minSalary, maxSalary)
-}
-
 func (s *Service) ListByFilterParams(ctx context.Context, filter domain.VacancyFilter) ([]domain.Vacancy, error) {
-	conditions, args := BuildFilterConditions(filter)
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = "WHERE " + strings.Join(conditions, " AND ") // или " AND " — выбирайте логику
+	pagination := domain.Pagination{Page: filter.Page, ItemsPerPage: filter.ItemsPerPage}
+	pagination.Normalize()
+	filter.Page = pagination.Page
+	filter.ItemsPerPage = pagination.ItemsPerPage
+	if filter.Keyword != "" && len(filter.SearchFields) == 0 {
+		filter.SearchFields = []domain.VacancySearchField{
+			domain.VacancySearchTitle,
+			domain.VacancySearchDescription,
+			domain.VacancySearchCompanyName,
+		}
 	}
-	return s.repo.ListByFilterParams(ctx, whereClause, args...)
-}
-
-func BuildFilterConditions(filter domain.VacancyFilter) ([]string, []interface{}) {
-	var conditions []string
-	var args []interface{}
-	argCounter := 1
-	fmt.Println(filter)
-
-	if filter.MinSalary > 0 {
-		conditions = append(conditions, fmt.Sprintf("vacancy.salary >= $%d", argCounter))
-		args = append(args, filter.MinSalary)
-		argCounter++
+	if filter.Sort == "" {
+		filter.Sort = domain.VacancySortDateDesc
 	}
-
-	if filter.MaxSalary > 0 {
-		conditions = append(conditions, fmt.Sprintf("vacancy.salary <= $%d", argCounter))
-		args = append(args, filter.MaxSalary)
-		argCounter++
+	if duration, ok := filter.Period.Duration(); ok {
+		createdAfter := s.now().UTC().Add(-duration)
+		filter.CreatedAfter = &createdAfter
 	}
+	offset := (pagination.Page - 1) * pagination.ItemsPerPage
 
-	if filter.Keyword != "" {
-		pattern := "%" + filter.Keyword + "%"
-		conditions = append(conditions, fmt.Sprintf("vacancy.title ILIKE $%d OR vacancy.description ILIKE $%d", argCounter, argCounter))
-		args = append(args, pattern) // один раз передаём паттерн
-		argCounter++
-	}
-
-	return conditions, args
+	return s.repo.ListByFilterParams(ctx, filter, offset, pagination.ItemsPerPage)
 }
