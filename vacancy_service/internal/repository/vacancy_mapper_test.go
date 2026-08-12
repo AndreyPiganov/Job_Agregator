@@ -1,4 +1,4 @@
-package vacancy
+package repository
 
 import (
 	"testing"
@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"vacancy_service/internal/db"
+	"vacancy_service/internal/domain"
 )
 
 func TestVacancyFromGetRowMapsCompanyAndTimestamps(t *testing.T) {
@@ -69,5 +70,55 @@ func TestVacancyFromUpsertRowUsesDomainShape(t *testing.T) {
 	}
 	if vacancy.Title != "DevOps" {
 		t.Fatalf("expected title %q, got %q", "DevOps", vacancy.Title)
+	}
+}
+
+func TestNewVacancyFilterQueryParams(t *testing.T) {
+	minSalary := 1000.0
+	createdAfter := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	filter := domain.VacancyFilter{
+		MinSalary:    &minSalary,
+		CreatedAfter: &createdAfter,
+		Cities:       []string{"Moscow", "KAZAN"},
+		SearchFields: []domain.VacancySearchField{domain.VacancySearchCompanyName},
+	}
+
+	params := newVacancyFilterQueryParams(filter)
+
+	if !params.hasMinSalary || params.minSalary != minSalary {
+		t.Fatalf("expected enabled min salary %v, got enabled=%v value=%v", minSalary, params.hasMinSalary, params.minSalary)
+	}
+	if params.hasMaxSalary {
+		t.Fatal("expected absent max salary to stay disabled")
+	}
+	if !params.hasCreatedAfter || !params.createdAfter.Equal(createdAfter) {
+		t.Fatalf("expected enabled createdAfter %v, got enabled=%v value=%v", createdAfter, params.hasCreatedAfter, params.createdAfter)
+	}
+	if len(params.cities) != 2 || params.cities[0] != "moscow" || params.cities[1] != "kazan" {
+		t.Fatalf("expected normalized cities, got %#v", params.cities)
+	}
+	if params.searchByTitle || params.searchByDescription || !params.searchByCompanyName {
+		t.Fatalf("unexpected search flags: %#v", params)
+	}
+	if filter.Cities[0] != "Moscow" {
+		t.Fatalf("input filter was mutated: %#v", filter.Cities)
+	}
+}
+
+func TestVacancyOrderBy(t *testing.T) {
+	tests := map[domain.VacancySort]string{
+		domain.VacancySortDateDesc:   `vacancy."createdAt" DESC, vacancy.id DESC`,
+		domain.VacancySortDateAsc:    `vacancy."createdAt" ASC, vacancy.id ASC`,
+		domain.VacancySortSalaryDesc: `vacancy.salary DESC, vacancy."createdAt" DESC, vacancy.id DESC`,
+		domain.VacancySortSalaryAsc:  `vacancy.salary ASC, vacancy."createdAt" DESC, vacancy.id DESC`,
+		"invalid":                    `vacancy."createdAt" DESC, vacancy.id DESC`,
+	}
+
+	for sort, expected := range tests {
+		t.Run(string(sort), func(t *testing.T) {
+			if actual := vacancyOrderBy(sort); actual != expected {
+				t.Fatalf("expected %q, got %q", expected, actual)
+			}
+		})
 	}
 }

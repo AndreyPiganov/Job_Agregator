@@ -1,17 +1,28 @@
+SQLC_VERSION := v1.31.1
+
+.PHONY: deps run build test vet sqlc-install sqlc-vet sqlc-generate
+
 deps:
 	go mod download
 	go mod tidy
 
-migrate-up:
-	migrate -path ./migrations -database "$(DATABASE_URL)" up
-
-migrate-down:
-	migrate -path ./migrations -database "$(DATABASE_URL)" down 1
-
-# Если нужно собрать
-build:
-	go build -o service ./cmd/service
-
-# Запуск
 run:
-	go run ./cmd/service/main.go
+	go run ./cmd/vacancy
+
+build:
+	go build -o bin/vacancy-service ./cmd/vacancy
+
+test:
+	go test ./...
+
+vet:
+	go vet ./...
+
+sqlc-install:
+	go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
+
+sqlc-vet:
+	sqlc vet
+
+sqlc-generate:
+	sqlc generate

@@ -9,6 +9,16 @@ sql:
         out: "internal/db"
         sql_package: "pgx/v5"
         emit_json_tags: true
+        # Generated database structs stay internal; db tags are unnecessary
+        # because repository mapping and pgx scans are explicit.
+        emit_db_tags: false
+        # Keep generated JSON names consistent with the public camelCase API.
+        json_tags_case_style: "camel"
+        # Include the source SQL above generated methods for easier debugging.
+        emit_sql_as_comment: true
         emit_prepared_queries: false
         emit_interface: true
         emit_empty_slices: true
+        # Preserve sqlc's current parameter behavior explicitly: queries with
+        # more than one argument receive a generated Params struct.
+        query_parameter_limit: 1

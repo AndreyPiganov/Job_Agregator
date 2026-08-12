@@ -10,6 +10,7 @@ type Config struct {
 	Port        string
 	DatabaseURL string
 	LogLevel    slog.Level
+	LogDir      string
 }
 
 func Load() Config {
@@ -17,6 +18,7 @@ func Load() Config {
 		Port:        getEnv("PORT", "5003"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		LogLevel:    parseLogLevel(getEnv("LOG_LEVEL", "info")),
+		LogDir:      getEnv("LOG_DIR", "var/log"),
 	}
 }
 
