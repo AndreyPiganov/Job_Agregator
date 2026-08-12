@@ -1,0 +1,15 @@
+{
+  "name": "Job_Agregator",
+  "version": "0.0.0",
+  "private": true,
+    "scripts": {
+    "graph": "nx graph",
+    "build": "nx run-many -t build",
+    "test": "nx run-many -t test",
+    "vet": "nx run-many -t vet",
+    "affected": "nx affected -t test,vet,build"
+  },
+  "devDependencies": {
+    "nx": "23.1.1"
+  }
+}

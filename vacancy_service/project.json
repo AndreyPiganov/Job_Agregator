@@ -1,0 +1,49 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "vacancy-service",
+  "root": "vacancy_service",
+  "projectType": "application",
+  "sourceRoot": "vacancy_service",
+  "tags": ["type:service", "language:go"],
+  "targets": {
+    "serve": {
+      "command": "go run ./cmd/vacancy",
+      "continuous": true,
+      "options": {
+        "cwd": "vacancy_service"
+      }
+    },
+    "build": {
+      "command": "go build -o bin/vacancy-service ./cmd/vacancy",
+      "cache": true,
+      "inputs": ["default"],
+      "outputs": ["{projectRoot}/bin"],
+      "options": {
+        "cwd": "vacancy_service"
+      }
+    },
+    "test": {
+      "command": "go test ./...",
+      "cache": true,
+      "inputs": ["default"],
+      "options": {
+        "cwd": "vacancy_service"
+      }
+    },
+    "vet": {
+      "command": "go vet ./...",
+      "cache": true,
+      "inputs": ["default"],
+      "options": {
+        "cwd": "vacancy_service"
+      }
+    },
+    "sqlc": {
+      "command": "sqlc generate",
+      "cache": false,
+      "options": {
+        "cwd": "vacancy_service"
+      }
+    }
+  }
+}
