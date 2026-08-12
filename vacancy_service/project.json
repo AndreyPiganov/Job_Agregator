@@ -6,13 +6,6 @@
   "sourceRoot": "vacancy_service",
   "tags": ["type:service", "language:go"],
   "targets": {
-    "serve": {
-      "command": "go run ./cmd/vacancy",
-      "continuous": true,
-      "options": {
-        "cwd": "vacancy_service"
-      }
-    },
     "build": {
       "command": "go build -o bin/vacancy-service ./cmd/vacancy",
       "cache": true,

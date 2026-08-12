@@ -1,15 +1,32 @@
 {
-  "name": "Job_Agregator",
+  "name": "job-aggregator",
   "version": "0.0.0",
   "private": true,
-    "scripts": {
+  "scripts": {
+    "dev": "docker compose up --build",
+    "dev:detached": "docker compose up --build -d",
+    "up": "docker compose up -d",
+    "stop": "docker compose down",
+    "restart": "docker compose restart",
+    "logs": "docker compose logs -f",
+    "logs:vacancy": "docker compose logs -f vacancy_service",
+    "status": "docker compose ps",
+    "prod": "docker compose -f docker-compose.prod.yml up --build -d",
+    "prod:stop": "docker compose -f docker-compose.prod.yml down",
     "graph": "nx graph",
     "build": "nx run-many -t build",
+    "build:vacancy": "nx build vacancy-service",
     "test": "nx run-many -t test",
+    "test:vacancy": "nx test vacancy-service",
     "vet": "nx run-many -t vet",
-    "affected": "nx affected -t test,vet,build"
+    "check": "nx run-many -t test,vet,build",
+    "affected": "nx affected -t test,vet,build",
+    "sqlc:vacancy": "nx run vacancy-service:sqlc"
   },
   "devDependencies": {
+    "@nestjs/schematics": "^11.0.0",
+    "@nx/nest": "^23.1.1",
     "nx": "23.1.1"
-  }
+  },
+  "dependencies": {}
 }

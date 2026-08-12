@@ -98,9 +98,17 @@ cp .env.example .env
 
 ### 2. Запустите проект
 
+Основной запуск всей системы с логами в терминале:
+
 ```bash
-docker compose up --build -d
-docker compose ps
+npm run dev
+```
+
+Или запуск в фоне:
+
+```bash
+npm run dev:detached
+npm run status
 ```
 
 После запуска:
@@ -136,8 +144,33 @@ named volume вместе с базой данных:
 docker compose down -v
 ```
 
-> Важно: текущая команда `make down` также использует флаг `-v` и удаляет данные
-> локальной PostgreSQL.
+Корневые сокращения для Docker Compose:
+
+```bash
+make up             # запустить development-контейнеры
+make up-build       # пересобрать и запустить
+make logs-vacancy   # смотреть логи vacancy_service
+make down           # остановить, сохранив PostgreSQL volume
+make down-volumes   # остановить и удалить данные PostgreSQL
+```
+
+Те же операции доступны через npm, поэтому для повседневной работы достаточно:
+
+```bash
+npm run dev          # пересобрать и запустить, показывая логи
+npm run dev:detached # пересобрать и запустить в фоне
+npm run logs         # смотреть логи всех контейнеров
+npm run stop         # остановить систему, сохранив PostgreSQL volume
+```
+
+Задачи исходного кода запускаются через npm/Nx:
+
+```bash
+npm run test:vacancy
+npm run build:vacancy
+npm run check
+npm run affected
+```
 
 ## HTTP API
 
