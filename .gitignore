@@ -87,7 +87,5 @@ s
 db-volumes
 
 
-.nx/cache
-.nx/workspace-data
-.nx/migrate-runs
 vacancy_service/bin/
+.vscode

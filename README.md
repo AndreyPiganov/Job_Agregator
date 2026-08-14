@@ -65,6 +65,7 @@ Job_Agregator/
 ├── auth_service/             # запланирован
 ├── docker-compose.yml        # development
 ├── docker-compose.prod.yml   # production
+├── Makefile                  # единые команды запуска и проверок
 └── .env.example              # пример конфигурации
 ```
 
@@ -74,6 +75,7 @@ Job_Agregator/
 
 - Docker Desktop или Docker Engine;
 - Docker Compose v2.
+- GNU Make для сокращённых команд (необязательно: их можно заменить на `docker compose`).
 
 Go и PostgreSQL на хосте для запуска через Docker не требуются.
 
@@ -101,14 +103,14 @@ cp .env.example .env
 Основной запуск всей системы с логами в терминале:
 
 ```bash
-npm run dev
+make dev
 ```
 
 Или запуск в фоне:
 
 ```bash
-npm run dev:detached
-npm run status
+make up-build
+make ps
 ```
 
 После запуска:
@@ -154,22 +156,14 @@ make down           # остановить, сохранив PostgreSQL volume
 make down-volumes   # остановить и удалить данные PostgreSQL
 ```
 
-Те же операции доступны через npm, поэтому для повседневной работы достаточно:
+Проверки исходного кода также запускаются из корня через Makefile:
 
 ```bash
-npm run dev          # пересобрать и запустить, показывая логи
-npm run dev:detached # пересобрать и запустить в фоне
-npm run logs         # смотреть логи всех контейнеров
-npm run stop         # остановить систему, сохранив PostgreSQL volume
-```
-
-Задачи исходного кода запускаются через npm/Nx:
-
-```bash
-npm run test:vacancy
-npm run build:vacancy
-npm run check
-npm run affected
+make test             # запустить тесты vacancy_service
+make vet              # выполнить go vet
+make vacancy-build    # собрать vacancy_service
+make check            # последовательно выполнить vet, test и build
+make sqlc-generate    # обновить код, сгенерированный sqlc
 ```
 
 ## HTTP API
