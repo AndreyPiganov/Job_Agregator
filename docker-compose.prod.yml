@@ -33,10 +33,13 @@ services:
       dockerfile: Dockerfile_prod
     ports:
       - "127.0.0.1:${VACANCY_PORT:-5003}:5003"
+    expose:
+      - "50051"
     volumes:
       - ./var/log/vacancy_service:/var/log/vacancy-service
     environment:
       PORT: "5003"
+      GRPC_PORT: "50051"
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_DIR: /var/log/vacancy-service
@@ -46,6 +49,45 @@ services:
         restart: true
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5003/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - job-network
+
+  gateway_service:
+    container_name: gateway_service
+    restart: unless-stopped
+    init: true
+    build:
+      context: ./gateway_service
+      dockerfile: Dockerfile_prod
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-3000}:3000"
+    volumes:
+      - ./var/log/gateway_service:/var/log/gateway-service
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: /var/log/gateway-service
+      PORT: "3000"
+    depends_on:
+      vacancy_service:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
       interval: 10s
       timeout: 3s
       retries: 5

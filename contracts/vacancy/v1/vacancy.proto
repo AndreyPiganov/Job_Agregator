@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package jobaggregator.vacancy.v1;
+
+option go_package = "vacancy_service/internal/proto/vacancy/v1;vacancyv1";
+
+import "google/protobuf/timestamp.proto";
+
+service VacancyService {
+  rpc GetVacancy(GetVacancyRequest) returns (GetVacancyResponse);
+  rpc ListVacancies(ListVacanciesRequest) returns (ListVacanciesResponse);
+}
+
+message GetVacancyRequest {
+  int64 id = 1;
+}
+
+message GetVacancyResponse {
+  Vacancy vacancy = 1;
+}
+
+message ListVacanciesRequest {
+  optional int32 page = 1;
+  optional int32 items_per_page = 2;
+}
+
+message ListVacanciesResponse {
+  repeated Vacancy vacancies = 1;
+  PageInfo page_info = 2;
+}
+
+message PageInfo {
+  int32 page = 1;
+  int32 items_per_page = 2;
+}
+
+message Company {
+  int64 id = 1;
+  string name = 2;
+}
+
+message Vacancy {
+  int64 id = 1;
+  string title = 2;
+  string description = 3;
+  int64 company_id = 4;
+  double salary = 5;
+  string link = 6;
+  string city = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  Company company = 10;
+}

@@ -1,52 +1,92 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, LoggerService, Inject } from '@nestjs/common';
+import { CallHandler, ExecutionContext, Inject, Injectable, LoggerService, NestInterceptor } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { Observable } from 'rxjs';
-import { tap } from 'rxjs/operators';
+import { Observable, tap } from 'rxjs';
+
+interface HttpRequest {
+  method?: string;
+  originalUrl?: string;
+  url?: string;
+}
+
+interface HttpResponse {
+  statusCode?: number;
+}
 
 @Injectable()
-export class LoggingInterceptor implements NestInterceptor {
-    @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: LoggerService;
+export class LoggingInterceptor implements NestInterceptor<unknown, unknown> {
+  constructor(
+    @Inject(WINSTON_MODULE_NEST_PROVIDER)
+    private readonly logger: LoggerService,
+  ) {}
 
-    intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-        const now = Date.now();
+  intercept(context: ExecutionContext, next: CallHandler<unknown>): Observable<unknown> {
+    const startedAt = Date.now();
 
-        switch (context.getType()) {
-            case 'http':
-                return this.logHttp(context, next, now);
-
-            case 'rpc':
-                return this.logRpc(context, next, now);
-
-            default:
-                return next.handle();
-        }
+    if (context.getType() === 'http') {
+      return this.logHttp(context, next, startedAt);
     }
 
-    private logHttp(context: ExecutionContext, next: CallHandler, now: number): Observable<any> {
-        const ctx = context.switchToHttp();
-        const request = ctx.getRequest();
-        const response = ctx.getResponse();
-        const { method, url } = request;
-
-        this.logger.log(`Incoming request: ${method} ${url} - ${Date.now() - now}ms`);
-
-        return next.handle().pipe(
-            tap(() => {
-                const { statusCode } = response;
-                this.logger.log(`Outgoing response: ${method} ${url} ${statusCode} - ${Date.now() - now}ms`);
-            })
-        );
+    if (context.getType() === 'rpc') {
+      return this.logRpc(context, next, startedAt);
     }
 
-    private logRpc(context: ExecutionContext, next: CallHandler, now: number): Observable<any> {
-        const handlerName = context.getHandler().name;
+    return next.handle();
+  }
 
-        this.logger.log(`Incoming RPC request: ${handlerName} - ${Date.now() - now}ms`);
+  private logHttp(context: ExecutionContext, next: CallHandler<unknown>, startedAt: number): Observable<unknown> {
+    const http = context.switchToHttp();
+    const request = http.getRequest<HttpRequest>();
+    const response = http.getResponse<HttpResponse>();
+    const method = request.method ?? 'UNKNOWN';
+    const path = request.originalUrl ?? request.url ?? 'UNKNOWN';
 
-        return next.handle().pipe(
-            tap(() => {
-                this.logger.log(`Outgoing RPC response: ${handlerName} - ${Date.now() - now}ms`);
-            })
-        );
-    }
+    return next.handle().pipe(
+      tap({
+        next: () => {
+          this.logger.log({
+            message: 'http request completed',
+            method,
+            path,
+            status: response.statusCode,
+            durationMs: Date.now() - startedAt,
+          });
+        },
+        error: (error: unknown) => {
+          this.logger.error({
+            message: 'http request failed',
+            method,
+            path,
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : error,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+        },
+      }),
+    );
+  }
+
+  private logRpc(context: ExecutionContext, next: CallHandler<unknown>, startedAt: number): Observable<unknown> {
+    const handler = context.getHandler().name;
+
+    return next.handle().pipe(
+      tap({
+        next: () => {
+          this.logger.log({
+            message: 'rpc request completed',
+            handler,
+            durationMs: Date.now() - startedAt,
+          });
+        },
+        error: (error: unknown) => {
+          this.logger.error({
+            message: 'rpc request failed',
+            handler,
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : error,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+        },
+      }),
+    );
+  }
 }

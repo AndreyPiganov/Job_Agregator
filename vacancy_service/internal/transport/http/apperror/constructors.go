@@ -3,7 +3,7 @@ package apperror
 import (
 	"net/http"
 
-	"vacancy_service/internal/validation"
+	"vacancy_service/internal/transport/http/validation"
 )
 
 func Validation(errors []validation.FieldError) error {

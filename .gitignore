@@ -88,4 +88,5 @@ db-volumes
 
 
 vacancy_service/bin/
+.tools/
 .vscode

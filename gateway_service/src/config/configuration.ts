@@ -1,6 +1,8 @@
 export default () => ({
-    port: parseInt(process.env.PORT, 10) || 3000,
-    environment: process.env.NODE_ENV || 'development',
-    databaseUrl: process.env.DATABASE_URL || '',
-    logLevel: process.env.LOG_LEVEL
+  port: Number.parseInt(process.env.PORT ?? '3000', 10),
+  environment: process.env.NODE_ENV ?? 'development',
+  logging: {
+    level: process.env.LOG_LEVEL ?? 'info',
+    directory: process.env.LOG_DIR ?? 'logs',
+  },
 });

@@ -19,7 +19,7 @@ RUN apk add --no-cache ca-certificates su-exec tzdata \
 COPY --from=builder /out/vacancy-service /usr/local/bin/vacancy-service
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-EXPOSE 5003
+EXPOSE 5003 50051
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/vacancy-service"]

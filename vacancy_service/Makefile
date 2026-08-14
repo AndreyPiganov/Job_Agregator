@@ -1,6 +1,10 @@
 SQLC_VERSION := v1.31.1
+PROTOC_GEN_GO_VERSION := v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION := v1.6.2
+PROTO_ROOT := ../contracts
+PROTO_FILE := $(PROTO_ROOT)/vacancy/v1/vacancy.proto
 
-.PHONY: deps run build test vet sqlc-install sqlc-vet sqlc-generate
+.PHONY: deps run build test vet proto-tools proto-generate sqlc-install sqlc-vet sqlc-generate
 
 deps:
 	go mod download
@@ -17,6 +21,16 @@ test:
 
 vet:
 	go vet ./...
+
+proto-tools:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+
+proto-generate:
+	protoc -I $(PROTO_ROOT) \
+		--go_out=. --go_opt=module=vacancy_service \
+		--go-grpc_out=. --go-grpc_opt=module=vacancy_service \
+		$(PROTO_FILE)
 
 sqlc-install:
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)

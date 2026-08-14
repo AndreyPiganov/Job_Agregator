@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	apperror "vacancy_service/internal/error"
+	"vacancy_service/internal/transport/http/apperror"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -41,7 +41,7 @@ func NewRouter(vacancyHandler VacancyHandler) http.Handler {
 
 func RegisterRoutes(r chi.Router, vacancyHandler VacancyHandler) {
 	r.Get("/health", vacancyHandler.Health)
-	r.Route("/vacancies", func(r chi.Router) {
+	r.Route("/api/v1/vacancies", func(r chi.Router) {
 		r.Get("/", vacancyHandler.List)
 		r.Get("/filter", vacancyHandler.ListByFilterParams)
 		r.Post("/", vacancyHandler.Create)

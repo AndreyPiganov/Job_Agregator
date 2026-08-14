@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	apperror "vacancy_service/internal/error"
+	"vacancy_service/internal/transport/http/apperror"
 )
 
 func Error(w http.ResponseWriter, err error) {

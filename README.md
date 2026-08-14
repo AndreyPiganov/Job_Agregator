@@ -1,8 +1,9 @@
 # Job Aggregator
 
-Сервис для хранения, обновления и поиска вакансий. Сейчас в проекте полностью
+Система для хранения, обновления и поиска вакансий. Сейчас в проекте полностью
 реализован `vacancy_service`: HTTP API на Go, PostgreSQL, фильтрация, сортировка,
-валидация запросов и структурированное логирование.
+валидация запросов и структурированное логирование. Также подготовлен базовый
+`gateway_service` на NestJS с health check, конфигурацией, Swagger и логированием.
 
 Каталоги `parser_service` и `auth_service` зарезервированы под будущие сервисы и
 пока не входят в Docker Compose.
@@ -24,6 +25,7 @@
 ## Технологии
 
 - Go 1.25;
+- Node.js 22 и NestJS 11;
 - PostgreSQL 16;
 - `chi` — HTTP-маршрутизация;
 - `pgx` и `sqlc` — доступ к PostgreSQL;
@@ -53,14 +55,20 @@ flowchart LR
 Job_Agregator/
 ├── vacancy_service/          # реализованный сервис вакансий
 │   ├── cmd/vacancy/          # точка входа
+│   ├── internal/app/         # сборка зависимостей и lifecycle процесса
 │   ├── internal/config/      # переменные окружения
 │   ├── internal/domain/      # доменные модели и параметры фильтрации
-│   ├── internal/http/        # router, middleware, handler и DTO
+│   ├── internal/transport/   # HTTP/gRPC адаптеры, HTTP validation и ошибки
+│   ├── internal/proto/       # сгенерированные приватные Go protobuf-типы
 │   ├── internal/service/     # прикладная логика
 │   ├── internal/repository/  # PostgreSQL repository
 │   ├── internal/db/          # schema.sql, SQL-запросы и sqlc-код
-│   ├── internal/logging/     # настройка логирования
-│   └── internal/validation/  # validator и сообщения об ошибках
+│   └── internal/logging/     # настройка логирования
+├── gateway_service/          # внешний HTTP gateway на NestJS
+│   ├── src/config/            # env validation и логирование
+│   ├── src/common/            # общие interceptors и responses
+│   └── src/modules/           # функциональные Nest-модули
+├── contracts/                # версионированные межсервисные protobuf-контракты
 ├── parser_service/           # запланирован
 ├── auth_service/             # запланирован
 ├── docker-compose.yml        # development
@@ -115,13 +123,18 @@ make ps
 
 После запуска:
 
-- HTTP API: `http://localhost:5003`;
-- health check: `http://localhost:5003/health`;
+- gateway: `http://localhost:3000`;
+- Swagger gateway: `http://localhost:3000/api-docs`;
+- health gateway: `http://localhost:3000/health`;
+- внутренний HTTP API вакансий: `http://localhost:5003`;
+- внутренний gRPC API вакансий: `localhost:50051`;
+- health vacancy_service: `http://localhost:5003/health`;
 - PostgreSQL: `localhost:5425`.
 
 Проверка:
 
 ```bash
+curl http://localhost:3000/health
 curl http://localhost:5003/health
 ```
 
@@ -152,6 +165,7 @@ docker compose down -v
 make up             # запустить development-контейнеры
 make up-build       # пересобрать и запустить
 make logs-vacancy   # смотреть логи vacancy_service
+make logs-gateway   # смотреть логи gateway_service
 make down           # остановить, сохранив PostgreSQL volume
 make down-volumes   # остановить и удалить данные PostgreSQL
 ```
@@ -159,10 +173,13 @@ make down-volumes   # остановить и удалить данные Postgr
 Проверки исходного кода также запускаются из корня через Makefile:
 
 ```bash
-make test             # запустить тесты vacancy_service
+make test             # запустить тесты реализованных сервисов
 make vet              # выполнить go vet
 make vacancy-build    # собрать vacancy_service
-make check            # последовательно выполнить vet, test и build
+make gateway-build    # собрать gateway_service
+make gateway-check    # проверить форматирование, lint, тесты и сборку gateway
+make check            # проверить и собрать все реализованные сервисы
+make proto-generate   # обновить Go-код из protobuf-контрактов
 make sqlc-generate    # обновить код, сгенерированный sqlc
 ```
 
@@ -173,16 +190,16 @@ make sqlc-generate    # обновить код, сгенерированный 
 | Метод | Маршрут | Назначение |
 | --- | --- | --- |
 | `GET` | `/health` | состояние сервиса |
-| `GET` | `/vacancies/?page=1&itemsPerPage=10` | список вакансий |
-| `GET` | `/vacancies/{id}` | вакансия по ID |
-| `POST` | `/vacancies/` | создать или обновить вакансию |
-| `POST` | `/vacancies/batch` | создать или обновить пакет вакансий |
-| `GET` | `/vacancies/filter` | поиск, фильтрация и сортировка |
+| `GET` | `/api/v1/vacancies/?page=1&itemsPerPage=10` | список вакансий |
+| `GET` | `/api/v1/vacancies/{id}` | вакансия по ID |
+| `POST` | `/api/v1/vacancies/` | создать или обновить вакансию |
+| `POST` | `/api/v1/vacancies/batch` | создать или обновить пакет вакансий |
+| `GET` | `/api/v1/vacancies/filter` | поиск, фильтрация и сортировка |
 
 ### Создание вакансии
 
 ```bash
-curl -X POST http://localhost:5003/vacancies/ \
+curl -X POST http://localhost:5003/api/v1/vacancies/ \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Go developer",
@@ -248,7 +265,7 @@ Endpoint принимает JSON-массив:
 Пример комбинированного запроса:
 
 ```text
-GET /vacancies/filter?q=Backend&search_field=title&search_field=company_name&city=Moscow,Kazan&minSalary=100000&sort=salary_desc&period=week&page=1&itemsPerPage=20
+GET /api/v1/vacancies/filter?q=Backend&search_field=title&search_field=company_name&city=Moscow,Kazan&minSalary=100000&sort=salary_desc&period=week&page=1&itemsPerPage=20
 ```
 
 | Параметр | Значения | Описание |
@@ -299,6 +316,7 @@ GET /vacancies/filter?q=Backend&search_field=title&search_field=company_name&cit
 | `POSTGRES_PORT` | `5425` | порт PostgreSQL на хосте |
 | `DATABASE_URL` | обязательна для production | строка подключения сервиса |
 | `VACANCY_PORT` | `5003` | порт API на хосте |
+| `VACANCY_GRPC_PORT` | `50051` | development gRPC-порт vacancy_service на хосте |
 | `LOG_LEVEL` | `debug` в development, `info` в production | минимальный уровень stdout-логов |
 | `LOG_DIR` | `/var/log/vacancy-service` в контейнере | каталог файловых логов |
 

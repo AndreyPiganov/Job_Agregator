@@ -1,4 +1,8 @@
 node_modules
-Dockerfile
+dist
+coverage
+logs
+Dockerfile_dev
+Dockerfile_prod
 .dockerignore
 .env

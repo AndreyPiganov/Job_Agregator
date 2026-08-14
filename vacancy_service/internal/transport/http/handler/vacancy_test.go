@@ -11,6 +11,7 @@ import (
 
 	domain "vacancy_service/internal/domain"
 	service "vacancy_service/internal/service"
+	"vacancy_service/internal/transport/http/validation"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -50,12 +51,17 @@ func (s stubService) ListByFilterParams(ctx context.Context, filter domain.Vacan
 	return s.filter(ctx, filter)
 }
 
-func newTestHandler(service Service) *handler {
-	return NewHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func newTestHandler(t *testing.T, service Service) *handler {
+	t.Helper()
+	requestValidator, err := validation.New()
+	if err != nil {
+		t.Fatalf("create validator: %v", err)
+	}
+	return NewHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)), requestValidator)
 }
 
 func TestGetByIDReturnsNotFound(t *testing.T) {
-	h := newTestHandler(stubService{
+	h := newTestHandler(t, stubService{
 		getByID: func(context.Context, int64) (domain.Vacancy, error) {
 			return domain.Vacancy{}, domain.ErrVacancyNotFound
 		},
@@ -74,7 +80,7 @@ func TestGetByIDReturnsNotFound(t *testing.T) {
 }
 
 func TestCreateRejectsInvalidRequest(t *testing.T) {
-	h := newTestHandler(stubService{})
+	h := newTestHandler(t, stubService{})
 	req := httptest.NewRequest(http.MethodPost, "/vacancies", strings.NewReader(`{"title":"   "}`))
 	response := httptest.NewRecorder()
 
@@ -90,7 +96,7 @@ func TestCreateRejectsInvalidRequest(t *testing.T) {
 
 func TestCreateBatchAcceptsWrappedPayload(t *testing.T) {
 	called := false
-	h := newTestHandler(stubService{
+	h := newTestHandler(t, stubService{
 		createBatch: func(_ context.Context, inputs []service.CreateVacancyInput) ([]domain.Vacancy, error) {
 			called = true
 			if len(inputs) != 1 || inputs[0].CompanyName != "Acme" {
@@ -114,7 +120,7 @@ func TestCreateBatchAcceptsWrappedPayload(t *testing.T) {
 }
 
 func TestListRejectsInvalidPagination(t *testing.T) {
-	h := newTestHandler(stubService{})
+	h := newTestHandler(t, stubService{})
 	req := httptest.NewRequest(http.MethodGet, "/vacancies?page=abc", nil)
 	response := httptest.NewRecorder()
 
@@ -127,7 +133,7 @@ func TestListRejectsInvalidPagination(t *testing.T) {
 
 func TestListByFilterParsesCitiesAndSearchFields(t *testing.T) {
 	called := false
-	h := newTestHandler(stubService{
+	h := newTestHandler(t, stubService{
 		filter: func(_ context.Context, filter domain.VacancyFilter) ([]domain.Vacancy, error) {
 			called = true
 			if len(filter.Cities) != 3 || filter.Cities[0] != "Moscow" || filter.Cities[2] != "Kazan" {
@@ -166,7 +172,7 @@ func TestListByFilterParsesCitiesAndSearchFields(t *testing.T) {
 }
 
 func TestListByFilterRejectsInvalidSalaryRange(t *testing.T) {
-	h := newTestHandler(stubService{})
+	h := newTestHandler(t, stubService{})
 	req := httptest.NewRequest(http.MethodGet, "/vacancies/filter?minSalary=200&maxSalary=100", nil)
 	response := httptest.NewRecorder()
 
@@ -178,7 +184,7 @@ func TestListByFilterRejectsInvalidSalaryRange(t *testing.T) {
 }
 
 func TestListByFilterRejectsCityAsSearchField(t *testing.T) {
-	h := newTestHandler(stubService{})
+	h := newTestHandler(t, stubService{})
 	req := httptest.NewRequest(http.MethodGet, "/vacancies/filter?q=Moscow&search_field=city", nil)
 	response := httptest.NewRecorder()
 
@@ -197,7 +203,7 @@ func TestListByFilterRejectsInvalidSortAndPeriod(t *testing.T) {
 
 	for _, target := range tests {
 		t.Run(target, func(t *testing.T) {
-			h := newTestHandler(stubService{})
+			h := newTestHandler(t, stubService{})
 			req := httptest.NewRequest(http.MethodGet, target, nil)
 			response := httptest.NewRecorder()
 

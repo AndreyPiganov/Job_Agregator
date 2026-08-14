@@ -14,11 +14,11 @@ import (
 	"strings"
 
 	domain "vacancy_service/internal/domain"
-	apperror "vacancy_service/internal/error"
-	httpx "vacancy_service/internal/http"
-	"vacancy_service/internal/http/handler/dto"
 	service "vacancy_service/internal/service"
-	"vacancy_service/internal/validation"
+	httpx "vacancy_service/internal/transport/http"
+	"vacancy_service/internal/transport/http/apperror"
+	"vacancy_service/internal/transport/http/handler/dto"
+	"vacancy_service/internal/transport/http/validation"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -34,14 +34,16 @@ type Service interface {
 }
 
 type handler struct {
-	service Service
-	logger  *slog.Logger
+	service   Service
+	logger    *slog.Logger
+	validator *validation.Validator
 }
 
-func NewHandler(service Service, logger *slog.Logger) *handler {
+func NewHandler(service Service, logger *slog.Logger, validator *validation.Validator) *handler {
 	return &handler{
-		service: service,
-		logger:  logger,
+		service:   service,
+		logger:    logger,
+		validator: validator,
 	}
 }
 
@@ -110,7 +112,7 @@ func (h *handler) Create(w http.ResponseWriter, r *http.Request) {
 		writeDecodeError(w, err)
 		return
 	}
-	if err := validation.Struct(dtoReq); err != nil {
+	if err := h.validator.Struct(dtoReq); err != nil {
 		httpx.Error(
 			w,
 			apperror.Validation(validation.Parse(err)))
@@ -162,7 +164,7 @@ func (h *handler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	inputs := make([]service.CreateVacancyInput, 0, len(dtoInputs))
 	for _, d := range dtoInputs {
-		if err := validation.Struct(d); err != nil {
+		if err := h.validator.Struct(d); err != nil {
 			httpx.Error(
 				w,
 				apperror.Validation(validation.Parse(err)))
@@ -201,7 +203,7 @@ func (h *handler) ListByFilterParams(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, apperror.BadRequest(err.Error()))
 		return
 	}
-	if err := validation.Struct(request); err != nil {
+	if err := h.validator.Struct(request); err != nil {
 		httpx.Error(
 			w,
 			apperror.Validation(validation.Parse(err)))

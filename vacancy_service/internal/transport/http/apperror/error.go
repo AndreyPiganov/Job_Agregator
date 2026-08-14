@@ -1,6 +1,6 @@
 package apperror
 
-import "vacancy_service/internal/validation"
+import "vacancy_service/internal/transport/http/validation"
 
 type Error struct {
 	Status  int                     `json:"-"`
