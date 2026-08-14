@@ -1,4 +1,6 @@
 services:
+
+# DB
   postgres:
     image: postgres:16-alpine
     container_name: postgres
@@ -21,6 +23,9 @@ services:
     networks:
       - job-network
 
+
+# Services 
+## Vacancy
   vacancy_service:
     container_name: vacancy_service
     restart: unless-stopped
@@ -58,6 +63,27 @@ services:
     networks:
       - job-network
 
+## Gateway
+  gateway_service:
+    container_name: gateway_service
+    restart: always
+    build:
+      context: ./gateway_service
+      dockerfile: Dockerfile_dev
+    expose:
+      - '3000'
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - ./gateway_service:/app
+      - ./var/log:/var/gateway/log
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      PORT: 3000
+    depends_on:
+      - vacancy_service
+      
+# Other
 networks:
   job-network:
     driver: bridge
