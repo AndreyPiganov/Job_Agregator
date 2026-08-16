@@ -25,11 +25,17 @@ Filter query parameters:
 ## gRPC API
 
 The versioned contract is stored in `../contracts/vacancy/v1/vacancy.proto`.
-The first read-only API exposes:
+The API exposes:
 
 - `jobaggregator.vacancy.v1.VacancyService/GetVacancy`
 - `jobaggregator.vacancy.v1.VacancyService/ListVacancies`
+- `jobaggregator.vacancy.v1.VacancyService/CreateVacancy`
+- `jobaggregator.vacancy.v1.VacancyService/BatchCreateVacancies`
 - standard `grpc.health.v1.Health` service
+
+`ListVacancies` accepts pagination and optional filters in one request. Search
+fields, sorting, and time periods are protobuf enums, so unsupported values are
+rejected at the contract boundary rather than passed to the database.
 
 The HTTP and gRPC transports call the same application service. The default
 gRPC port is `50051`. Example with `grpcurl` from the repository root:
@@ -41,6 +47,44 @@ grpcurl -plaintext \
   -d '{"id": 1}' \
   localhost:50051 \
   jobaggregator.vacancy.v1.VacancyService/GetVacancy
+```
+
+Filter and sort vacancies:
+
+```bash
+grpcurl -plaintext \
+  -import-path contracts \
+  -proto vacancy/v1/vacancy.proto \
+  -d '{
+    "page": 1,
+    "itemsPerPage": 20,
+    "keyword": "Go",
+    "cities": ["Moscow", "Kazan"],
+    "searchFields": ["VACANCY_SEARCH_FIELD_TITLE", "VACANCY_SEARCH_FIELD_COMPANY_NAME"],
+    "minSalary": 100000,
+    "sort": "VACANCY_SORT_SALARY_DESC",
+    "period": "VACANCY_PERIOD_WEEK"
+  }' \
+  localhost:50051 \
+  jobaggregator.vacancy.v1.VacancyService/ListVacancies
+```
+
+Create a vacancy:
+
+```bash
+grpcurl -plaintext \
+  -import-path contracts \
+  -proto vacancy/v1/vacancy.proto \
+  -d '{
+    "title": "Go developer",
+    "description": "Build vacancy services",
+    "salary": 250000,
+    "link": "https://example.com/vacancies/42",
+    "city": "Moscow",
+    "companyName": "Acme"
+  }' \
+  localhost:50051 \
+  jobaggregator.vacancy.v1.VacancyService/CreateVacancy
 ```
 
 ## Run
@@ -69,7 +113,7 @@ LOG_DIR=var/log
 - `internal/repository`: application-facing database methods and transactions.
 - `internal/domain`: domain structs and filters.
 - `internal/transport/http`: routes, request validation, transport errors, and JSON responses.
-- `internal/transport/grpc`: gRPC validation, error translation, mapping, and logging.
+- `internal/transport/grpc`: Protovalidate interceptor, error translation, mapping, and logging.
 - `internal/proto/vacancy/v1`: Go code generated from the protobuf contract.
 
 ## Logs
@@ -103,8 +147,9 @@ make sqlc-generate
 
 ## Protobuf generation
 
-Install `protoc` for your operating system once. Then install the pinned Go
-plugins and regenerate the Go types after changing the `.proto` contract:
+Install the pinned Buf and Go plugins, then regenerate the Go types after
+changing the `.proto` contract. Buf resolves the Protovalidate schema through
+the dependency pinned in the root `buf.lock`:
 
 ```bash
 make proto-tools

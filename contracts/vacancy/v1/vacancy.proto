@@ -2,26 +2,75 @@ syntax = "proto3";
 
 package jobaggregator.vacancy.v1;
 
-option go_package = "vacancy_service/internal/proto/vacancy/v1;vacancyv1";
-
+import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
+
+option go_package = "vacancy_service/internal/proto/vacancy/v1;vacancyv1";
 
 service VacancyService {
   rpc GetVacancy(GetVacancyRequest) returns (GetVacancyResponse);
   rpc ListVacancies(ListVacanciesRequest) returns (ListVacanciesResponse);
+  rpc CreateVacancy(CreateVacancyRequest) returns (CreateVacancyResponse);
+  rpc BatchCreateVacancies(BatchCreateVacanciesRequest) returns (BatchCreateVacanciesResponse);
 }
 
 message GetVacancyRequest {
-  int64 id = 1;
+  int64 id = 1 [(buf.validate.field).int64.gt = 0];
 }
 
 message GetVacancyResponse {
   Vacancy vacancy = 1;
 }
 
+// ListVacanciesRequest contains both pagination and optional filters. An empty
+// filter returns all vacancies, so clients do not need a second list RPC.
 message ListVacanciesRequest {
-  optional int32 page = 1;
-  optional int32 items_per_page = 2;
+  option (buf.validate.message).cel = {
+    id: "list_vacancies.keyword_required"
+    message: "keyword is required when search_fields is specified"
+    expression: "size(this.search_fields) == 0 || (has(this.keyword) && this.keyword.matches('.*\\\\S.*'))"
+  };
+  option (buf.validate.message).cel = {
+    id: "list_vacancies.salary_range"
+    message: "max_salary must be greater than or equal to min_salary"
+    expression: "!has(this.min_salary) || !has(this.max_salary) || this.max_salary >= this.min_salary"
+  };
+
+  optional int32 page = 1 [(buf.validate.field).int32.gte = 1];
+  optional int32 items_per_page = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 200];
+  repeated string cities = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {
+        min_len: 1
+        max_len: 100
+        pattern: ".*\\S.*"
+      }
+    }
+  }];
+  repeated VacancySearchField search_fields = 5 [(buf.validate.field).repeated = {
+    max_items: 3
+    items: {
+      enum: {
+        defined_only: true
+        not_in: 0
+      }
+    }
+  }];
+  optional double min_salary = 6 [(buf.validate.field).double = {
+    gte: 0
+    finite: true
+  }];
+  optional double max_salary = 7 [(buf.validate.field).double = {
+    gte: 0
+    finite: true
+  }];
+  VacancySort sort = 8 [(buf.validate.field).enum.defined_only = true];
+  VacancyPeriod period = 9 [(buf.validate.field).enum.defined_only = true];
 }
 
 message ListVacanciesResponse {
@@ -29,9 +78,77 @@ message ListVacanciesResponse {
   PageInfo page_info = 2;
 }
 
+message CreateVacancyRequest {
+  string title = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+  string description = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 10000
+    pattern: ".*\\S.*"
+  }];
+  double salary = 3 [(buf.validate.field).double = {
+    gte: 0
+    finite: true
+  }];
+  string link = 4 [(buf.validate.field).string = {
+    max_len: 2048
+    uri: true
+  }];
+  string city = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+    pattern: ".*\\S.*"
+  }];
+  string company_name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+}
+
+message CreateVacancyResponse {
+  Vacancy vacancy = 1;
+}
+
+message BatchCreateVacanciesRequest {
+  repeated CreateVacancyRequest vacancies = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 1000
+  }];
+}
+
+message BatchCreateVacanciesResponse {
+  repeated Vacancy vacancies = 1;
+}
+
 message PageInfo {
   int32 page = 1;
   int32 items_per_page = 2;
+}
+
+enum VacancySearchField {
+  VACANCY_SEARCH_FIELD_UNSPECIFIED = 0;
+  VACANCY_SEARCH_FIELD_TITLE = 1;
+  VACANCY_SEARCH_FIELD_DESCRIPTION = 2;
+  VACANCY_SEARCH_FIELD_COMPANY_NAME = 3;
+}
+
+enum VacancySort {
+  VACANCY_SORT_UNSPECIFIED = 0;
+  VACANCY_SORT_DATE_DESC = 1;
+  VACANCY_SORT_DATE_ASC = 2;
+  VACANCY_SORT_SALARY_DESC = 3;
+  VACANCY_SORT_SALARY_ASC = 4;
+}
+
+enum VacancyPeriod {
+  VACANCY_PERIOD_UNSPECIFIED = 0;
+  VACANCY_PERIOD_DAY = 1;
+  VACANCY_PERIOD_THREE_DAYS = 2;
+  VACANCY_PERIOD_WEEK = 3;
 }
 
 message Company {

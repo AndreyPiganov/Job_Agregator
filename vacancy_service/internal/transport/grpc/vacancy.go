@@ -7,14 +7,17 @@ import (
 
 	"vacancy_service/internal/domain"
 	vacancyv1 "vacancy_service/internal/proto/vacancy/v1"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"vacancy_service/internal/service"
+	grpcmappers "vacancy_service/internal/transport/grpc/mappers"
+	"vacancy_service/internal/transport/grpc/rpcerror"
 )
 
 type VacancyService interface {
 	List(ctx context.Context, pagination domain.Pagination) ([]domain.Vacancy, error)
 	GetByID(ctx context.Context, id int64) (domain.Vacancy, error)
+	Create(ctx context.Context, input service.CreateVacancyInput) (domain.Vacancy, error)
+	CreateBatch(ctx context.Context, inputs []service.CreateVacancyInput) ([]domain.Vacancy, error)
+	ListByFilterParams(ctx context.Context, filter domain.VacancyFilter) ([]domain.Vacancy, error)
 }
 
 type Server struct {
@@ -33,67 +36,65 @@ func NewServer(service VacancyService, logger *slog.Logger) *Server {
 
 func (s *Server) GetVacancy(ctx context.Context, request *vacancyv1.GetVacancyRequest) (*vacancyv1.GetVacancyResponse, error) {
 	id := request.GetId()
-	if id < 1 {
-		return nil, status.Error(codes.InvalidArgument, "id must be a positive integer")
-	}
 
 	vacancy, err := s.service.GetByID(ctx, id)
 	if errors.Is(err, domain.ErrVacancyNotFound) {
-		return nil, status.Errorf(codes.NotFound, "vacancy with id %d not found", id)
+		return nil, rpcerror.NotFoundf("vacancy with id %d not found", id)
 	}
 	if err != nil {
 		s.logger.ErrorContext(ctx, "gRPC: failed to get vacancy", "vacancy_id", id, "error", err)
-		return nil, serviceError(err)
+		return nil, rpcerror.FromService(err)
 	}
 
-	return &vacancyv1.GetVacancyResponse{Vacancy: vacancyToProto(vacancy)}, nil
+	return &vacancyv1.GetVacancyResponse{Vacancy: grpcmappers.VacancyToProto(vacancy)}, nil
 }
 
 func (s *Server) ListVacancies(ctx context.Context, request *vacancyv1.ListVacanciesRequest) (*vacancyv1.ListVacanciesResponse, error) {
-	pagination, err := paginationFromProto(request)
-	if err != nil {
-		return nil, err
-	}
+	params := grpcmappers.ListParamsFromProto(request)
 
-	vacancies, err := s.service.List(ctx, pagination)
+	var vacancies []domain.Vacancy
+	var err error
+	if params.HasFilters {
+		vacancies, err = s.service.ListByFilterParams(ctx, params.Filter)
+	} else {
+		vacancies, err = s.service.List(ctx, params.Pagination)
+	}
 	if err != nil {
 		s.logger.ErrorContext(ctx, "gRPC: failed to list vacancies", "error", err)
-		return nil, serviceError(err)
+		return nil, rpcerror.FromService(err)
 	}
 
 	return &vacancyv1.ListVacanciesResponse{
-		Vacancies: vacanciesToProto(vacancies),
+		Vacancies: grpcmappers.VacanciesToProto(vacancies),
 		PageInfo: &vacancyv1.PageInfo{
-			Page:         int32(pagination.Page),
-			ItemsPerPage: int32(pagination.ItemsPerPage),
+			Page:         int32(params.Pagination.Page),
+			ItemsPerPage: int32(params.Pagination.ItemsPerPage),
 		},
 	}, nil
 }
 
-func paginationFromProto(request *vacancyv1.ListVacanciesRequest) (domain.Pagination, error) {
-	var pagination domain.Pagination
-	if request != nil {
-		if request.Page != nil {
-			if request.GetPage() < 1 {
-				return domain.Pagination{}, status.Error(codes.InvalidArgument, "page must be a positive integer")
-			}
-			pagination.Page = int(request.GetPage())
-		}
-		if request.ItemsPerPage != nil {
-			if request.GetItemsPerPage() < 1 {
-				return domain.Pagination{}, status.Error(codes.InvalidArgument, "items_per_page must be a positive integer")
-			}
-			pagination.ItemsPerPage = int(request.GetItemsPerPage())
-		}
-	}
+func (s *Server) CreateVacancy(ctx context.Context, request *vacancyv1.CreateVacancyRequest) (*vacancyv1.CreateVacancyResponse, error) {
+	input := grpcmappers.CreateInputFromProto(request)
 
-	pagination.Normalize()
-	return pagination, nil
+	vacancy, err := s.service.Create(ctx, input)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "gRPC: failed to create vacancy", "error", err)
+		return nil, rpcerror.FromService(err)
+	}
+	s.logger.InfoContext(ctx, "gRPC: vacancy created", "vacancy_id", vacancy.ID, "company", input.CompanyName)
+
+	return &vacancyv1.CreateVacancyResponse{Vacancy: grpcmappers.VacancyToProto(vacancy)}, nil
 }
 
-func serviceError(err error) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return status.FromContextError(err).Err()
+func (s *Server) BatchCreateVacancies(ctx context.Context, request *vacancyv1.BatchCreateVacanciesRequest) (*vacancyv1.BatchCreateVacanciesResponse, error) {
+	inputs := grpcmappers.BatchCreateInputsFromProto(request)
+
+	vacancies, err := s.service.CreateBatch(ctx, inputs)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "gRPC: failed to create vacancy batch", "count", len(inputs), "error", err)
+		return nil, rpcerror.FromService(err)
 	}
-	return status.Error(codes.Internal, "internal server error")
+	s.logger.InfoContext(ctx, "gRPC: vacancy batch created", "count", len(vacancies))
+
+	return &vacancyv1.BatchCreateVacanciesResponse{Vacancies: grpcmappers.VacanciesToProto(vacancies)}, nil
 }

@@ -9,6 +9,8 @@ import (
 	vacancyv1 "vacancy_service/internal/proto/vacancy/v1"
 	grpcserver "vacancy_service/internal/transport/grpc"
 
+	"buf.build/go/protovalidate"
+	protovalidatemiddleware "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
@@ -21,13 +23,21 @@ type grpcRuntime struct {
 }
 
 func newGRPCServer(port string, service grpcserver.VacancyService, logger *slog.Logger) (*grpcRuntime, error) {
+	requestValidator, err := protovalidate.New()
+	if err != nil {
+		return nil, fmt.Errorf("configure Protovalidate: %w", err)
+	}
+
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		return nil, fmt.Errorf("listen gRPC on port %s: %w", port, err)
 	}
 
 	server := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(grpcserver.UnaryServerInterceptor(logger)),
+		grpc.ChainUnaryInterceptor(
+			grpcserver.UnaryServerInterceptor(logger),
+			protovalidatemiddleware.UnaryServerInterceptor(requestValidator),
+		),
 	)
 	vacancyv1.RegisterVacancyServiceServer(server, grpcserver.NewServer(service, logger))
 

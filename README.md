@@ -30,6 +30,7 @@
 - `chi` — HTTP-маршрутизация;
 - `pgx` и `sqlc` — доступ к PostgreSQL;
 - `go-playground/validator` — валидация HTTP-запросов;
+- Buf и Protovalidate — генерация protobuf-кода и единые правила валидации gRPC-контрактов;
 - `slog` и `lumberjack` — структурированные логи и ротация;
 - Docker и Docker Compose.
 
@@ -58,7 +59,7 @@ Job_Agregator/
 │   ├── internal/app/         # сборка зависимостей и lifecycle процесса
 │   ├── internal/config/      # переменные окружения
 │   ├── internal/domain/      # доменные модели и параметры фильтрации
-│   ├── internal/transport/   # HTTP/gRPC адаптеры, HTTP validation и ошибки
+│   ├── internal/transport/   # HTTP/gRPC адаптеры, validation и ошибки транспорта
 │   ├── internal/proto/       # сгенерированные приватные Go protobuf-типы
 │   ├── internal/service/     # прикладная логика
 │   ├── internal/repository/  # PostgreSQL repository

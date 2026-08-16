@@ -7,6 +7,8 @@ import (
 	"runtime/debug"
 	"time"
 
+	"vacancy_service/internal/transport/grpc/rpcerror"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,7 +32,7 @@ func UnaryServerInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 					"panic", fmt.Sprint(recovered),
 					"stack", string(debug.Stack()),
 				)
-				err = status.Error(codes.Internal, "internal server error")
+				err = rpcerror.Internal()
 			}
 
 			code := status.Code(err)

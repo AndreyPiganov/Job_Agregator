@@ -10,6 +10,7 @@ import (
 
 	"vacancy_service/internal/domain"
 	vacancyv1 "vacancy_service/internal/proto/vacancy/v1"
+	"vacancy_service/internal/service"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,8 +18,11 @@ import (
 )
 
 type stubVacancyService struct {
-	list    func(context.Context, domain.Pagination) ([]domain.Vacancy, error)
-	getByID func(context.Context, int64) (domain.Vacancy, error)
+	list        func(context.Context, domain.Pagination) ([]domain.Vacancy, error)
+	getByID     func(context.Context, int64) (domain.Vacancy, error)
+	create      func(context.Context, service.CreateVacancyInput) (domain.Vacancy, error)
+	createBatch func(context.Context, []service.CreateVacancyInput) ([]domain.Vacancy, error)
+	filter      func(context.Context, domain.VacancyFilter) ([]domain.Vacancy, error)
 }
 
 func (s stubVacancyService) List(ctx context.Context, pagination domain.Pagination) ([]domain.Vacancy, error) {
@@ -33,6 +37,27 @@ func (s stubVacancyService) GetByID(ctx context.Context, id int64) (domain.Vacan
 		return domain.Vacancy{}, nil
 	}
 	return s.getByID(ctx, id)
+}
+
+func (s stubVacancyService) Create(ctx context.Context, input service.CreateVacancyInput) (domain.Vacancy, error) {
+	if s.create == nil {
+		return domain.Vacancy{}, nil
+	}
+	return s.create(ctx, input)
+}
+
+func (s stubVacancyService) CreateBatch(ctx context.Context, inputs []service.CreateVacancyInput) ([]domain.Vacancy, error) {
+	if s.createBatch == nil {
+		return nil, nil
+	}
+	return s.createBatch(ctx, inputs)
+}
+
+func (s stubVacancyService) ListByFilterParams(ctx context.Context, filter domain.VacancyFilter) ([]domain.Vacancy, error) {
+	if s.filter == nil {
+		return nil, nil
+	}
+	return s.filter(ctx, filter)
 }
 
 func newTestServer(service VacancyService) *Server {
@@ -74,15 +99,6 @@ func TestGetVacancyMapsDomainEntity(t *testing.T) {
 	}
 }
 
-func TestGetVacancyValidatesID(t *testing.T) {
-	server := newTestServer(stubVacancyService{})
-
-	_, err := server.GetVacancy(context.Background(), &vacancyv1.GetVacancyRequest{})
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("expected %s, got %s: %v", codes.InvalidArgument, status.Code(err), err)
-	}
-}
-
 func TestGetVacancyMapsNotFound(t *testing.T) {
 	server := newTestServer(stubVacancyService{
 		getByID: func(context.Context, int64) (domain.Vacancy, error) {
@@ -118,13 +134,96 @@ func TestListVacanciesAppliesPaginationDefaults(t *testing.T) {
 	}
 }
 
-func TestListVacanciesRejectsExplicitZeroPage(t *testing.T) {
-	server := newTestServer(stubVacancyService{})
+func TestListVacanciesMapsFilters(t *testing.T) {
+	server := newTestServer(stubVacancyService{
+		filter: func(_ context.Context, filter domain.VacancyFilter) ([]domain.Vacancy, error) {
+			if filter.Page != 2 || filter.ItemsPerPage != 25 {
+				t.Fatalf("unexpected pagination: %#v", filter)
+			}
+			if filter.Keyword != "Go" {
+				t.Fatalf("unexpected keyword: %q", filter.Keyword)
+			}
+			if len(filter.Cities) != 2 || filter.Cities[0] != "Moscow" || filter.Cities[1] != "Kazan" {
+				t.Fatalf("unexpected cities: %#v", filter.Cities)
+			}
+			if len(filter.SearchFields) != 2 || filter.SearchFields[0] != domain.VacancySearchTitle || filter.SearchFields[1] != domain.VacancySearchCompanyName {
+				t.Fatalf("unexpected search fields: %#v", filter.SearchFields)
+			}
+			if filter.MinSalary == nil || *filter.MinSalary != 100000 || filter.MaxSalary == nil || *filter.MaxSalary != 300000 {
+				t.Fatalf("unexpected salary filter: %#v", filter)
+			}
+			if filter.Sort != domain.VacancySortSalaryDesc || filter.Period != domain.VacancyPeriodThreeDays {
+				t.Fatalf("unexpected sort or period: %#v", filter)
+			}
+			return []domain.Vacancy{{ID: 7}}, nil
+		},
+	})
 
-	request := &vacancyv1.ListVacanciesRequest{Page: proto.Int32(0)}
-	_, err := server.ListVacancies(context.Background(), request)
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("expected %s, got %s: %v", codes.InvalidArgument, status.Code(err), err)
+	response, err := server.ListVacancies(context.Background(), &vacancyv1.ListVacanciesRequest{
+		Page:         proto.Int32(2),
+		ItemsPerPage: proto.Int32(25),
+		Keyword:      proto.String(" Go "),
+		Cities:       []string{" Moscow ", "Kazan", "Moscow"},
+		SearchFields: []vacancyv1.VacancySearchField{
+			vacancyv1.VacancySearchField_VACANCY_SEARCH_FIELD_TITLE,
+			vacancyv1.VacancySearchField_VACANCY_SEARCH_FIELD_COMPANY_NAME,
+		},
+		MinSalary: proto.Float64(100000),
+		MaxSalary: proto.Float64(300000),
+		Sort:      vacancyv1.VacancySort_VACANCY_SORT_SALARY_DESC,
+		Period:    vacancyv1.VacancyPeriod_VACANCY_PERIOD_THREE_DAYS,
+	})
+	if err != nil {
+		t.Fatalf("ListVacancies returned error: %v", err)
+	}
+	if len(response.GetVacancies()) != 1 || response.GetVacancies()[0].GetId() != 7 {
+		t.Fatalf("unexpected vacancies: %v", response.GetVacancies())
+	}
+	if response.GetPageInfo().GetPage() != 2 || response.GetPageInfo().GetItemsPerPage() != 25 {
+		t.Fatalf("unexpected page info: %v", response.GetPageInfo())
+	}
+}
+
+func TestCreateVacancyMapsRequest(t *testing.T) {
+	server := newTestServer(stubVacancyService{
+		create: func(_ context.Context, input service.CreateVacancyInput) (domain.Vacancy, error) {
+			if input.Title != "Go developer" || input.Description != "Build services" {
+				t.Fatalf("unexpected text fields: %#v", input)
+			}
+			if input.CompanyName != "Acme" || input.City != "Moscow" || input.Salary != 250000 {
+				t.Fatalf("unexpected create input: %#v", input)
+			}
+			return domain.Vacancy{ID: 42, Title: input.Title}, nil
+		},
+	})
+
+	response, err := server.CreateVacancy(context.Background(), validCreateRequest())
+	if err != nil {
+		t.Fatalf("CreateVacancy returned error: %v", err)
+	}
+	if response.GetVacancy().GetId() != 42 || response.GetVacancy().GetTitle() != "Go developer" {
+		t.Fatalf("unexpected response: %v", response)
+	}
+}
+
+func TestBatchCreateVacancies(t *testing.T) {
+	server := newTestServer(stubVacancyService{
+		createBatch: func(_ context.Context, inputs []service.CreateVacancyInput) ([]domain.Vacancy, error) {
+			if len(inputs) != 2 || inputs[1].CompanyName != "Acme" {
+				t.Fatalf("unexpected batch inputs: %#v", inputs)
+			}
+			return []domain.Vacancy{{ID: 1}, {ID: 2}}, nil
+		},
+	})
+
+	response, err := server.BatchCreateVacancies(context.Background(), &vacancyv1.BatchCreateVacanciesRequest{
+		Vacancies: []*vacancyv1.CreateVacancyRequest{validCreateRequest(), validCreateRequest()},
+	})
+	if err != nil {
+		t.Fatalf("BatchCreateVacancies returned error: %v", err)
+	}
+	if len(response.GetVacancies()) != 2 {
+		t.Fatalf("expected two vacancies, got %d", len(response.GetVacancies()))
 	}
 }
 
@@ -141,5 +240,16 @@ func TestListVacanciesHidesInternalError(t *testing.T) {
 	}
 	if status.Convert(err).Message() != "internal server error" {
 		t.Fatalf("unexpected public error: %v", err)
+	}
+}
+
+func validCreateRequest() *vacancyv1.CreateVacancyRequest {
+	return &vacancyv1.CreateVacancyRequest{
+		Title:       " Go developer ",
+		Description: " Build services ",
+		Salary:      250000,
+		Link:        "https://example.com/vacancies/42",
+		City:        " Moscow ",
+		CompanyName: " Acme ",
 	}
 }

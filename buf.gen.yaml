@@ -1,0 +1,12 @@
+version: v2
+
+plugins:
+  - local: protoc-gen-go
+    out: vacancy_service
+    opt:
+      - module=vacancy_service
+
+  - local: protoc-gen-go-grpc
+    out: vacancy_service
+    opt:
+      - module=vacancy_service
