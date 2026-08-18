@@ -1,7 +1,9 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClientGrpc } from '@nestjs/microservices';
+import { sha256 } from 'js-sha256';
 import { firstValueFrom, Observable, timeout, TimeoutError } from 'rxjs';
+import { AppCacheService } from '../../common/cache/app-cache.service';
 import { grpcErrorToUpstream } from '../../common/errors/grpc-error.mapper';
 import { UpstreamServiceError } from '../../common/errors/upstream-service.error';
 import {
@@ -22,12 +24,15 @@ import { ListVacanciesQuery } from './dto/list-vacancies.query';
 export class VacancyService implements OnModuleInit {
   private vacancyClient!: VacancyServiceClient;
   private readonly timeoutMs: number;
+  private readonly cacheTtlMs: number;
 
   constructor(
     @Inject(JOBAGGREGATOR_VACANCY_V1_PACKAGE_NAME) private readonly client: ClientGrpc,
     config: ConfigService,
+    private readonly cache: AppCacheService,
   ) {
     this.timeoutMs = config.get<number>('grpc.vacancy.timeoutMs', 3000);
+    this.cacheTtlMs = config.get<number>('cache.ttlMs', 15000);
   }
 
   onModuleInit(): void {
@@ -35,29 +40,46 @@ export class VacancyService implements OnModuleInit {
   }
 
   async getById(id: string): Promise<Vacancy> {
+    const cacheKey = `vacancy:get:${id}`;
+    const cached = await this.cache.get<Vacancy>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const response = await this.executeGrpcRequest(this.vacancyClient.getVacancy({ id }));
-    return this.requireVacancy(response.vacancy);
+    const vacancy = this.requireVacancy(response.vacancy);
+    await this.cache.set(cacheKey, vacancy, this.cacheTtlMs);
+    return vacancy;
   }
 
-  list(query: ListVacanciesQuery): Promise<ListVacanciesResponse> {
-    return this.executeGrpcRequest(
-      this.vacancyClient.listVacancies({
-        page: query.page,
-        items_per_page: query.items_per_page,
-        keyword: query.q?.trim(),
-        cities: query.city ?? [],
-        search_fields: (query.search_field ?? []).map(searchFieldFromHttp),
-        min_salary: query.min_salary,
-        max_salary: query.max_salary,
-        sort: sortFromHttp(query.sort),
-        period: periodFromHttp(query.period),
-      }),
-    );
+  async list(query: ListVacanciesQuery): Promise<ListVacanciesResponse> {
+    const request = {
+      page: query.page,
+      items_per_page: query.items_per_page,
+      keyword: query.q?.trim(),
+      cities: [...(query.city ?? [])].sort(),
+      search_fields: (query.search_field ?? []).map(searchFieldFromHttp).sort(),
+      min_salary: query.min_salary,
+      max_salary: query.max_salary,
+      sort: sortFromHttp(query.sort),
+      period: periodFromHttp(query.period),
+    };
+    const cacheKey = `vacancy:list:${hashCacheKey(request)}`;
+    const cached = await this.cache.get<ListVacanciesResponse>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const response = await this.executeGrpcRequest(this.vacancyClient.listVacancies(request));
+    await this.cache.set(cacheKey, response, this.cacheTtlMs);
+    return response;
   }
 
   async create(dto: CreateVacancyDto): Promise<Vacancy> {
     const response = await this.executeGrpcRequest(this.vacancyClient.createVacancy(dto));
-    return this.requireVacancy(response.vacancy);
+    const vacancy = this.requireVacancy(response.vacancy);
+    await this.cache.clear();
+    return vacancy;
   }
 
   async createBatch(vacancies: CreateVacancyDto[]): Promise<Vacancy[]> {
@@ -67,6 +89,7 @@ export class VacancyService implements OnModuleInit {
       } satisfies BatchCreateVacanciesRequest),
     );
 
+    await this.cache.clear();
     return response.vacancies;
   }
 
@@ -94,6 +117,10 @@ export class VacancyService implements OnModuleInit {
       throw grpcErrorToUpstream(error, 'vacancy service');
     }
   }
+}
+
+function hashCacheKey(value: object): string {
+  return sha256(JSON.stringify(value));
 }
 
 function searchFieldFromHttp(value: string): VacancySearchField {

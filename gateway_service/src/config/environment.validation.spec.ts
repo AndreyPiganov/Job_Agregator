@@ -10,6 +10,14 @@ describe('validateEnvironment', () => {
       PORT: 3000,
       LOG_LEVEL: 'info',
       LOG_DIR: 'logs',
+      REDIS_HOST: 'localhost',
+      REDIS_PORT: 6379,
+      REDIS_PASSWORD: 'change-me',
+      REDIS_DB: 0,
+      CACHE_TTL_MS: 15000,
+      CACHE_NAMESPACE: 'job-aggregator:gateway',
+      REDIS_CONNECT_TIMEOUT_MS: 500,
+      CACHE_FAILURE_COOLDOWN_MS: 5000,
       VACANCY_GRPC_URL: 'localhost:50051',
       VACANCY_GRPC_TIMEOUT_MS: 3000,
     });
@@ -27,5 +35,11 @@ describe('validateEnvironment', () => {
 
   it('rejects an invalid gRPC timeout', () => {
     expect(() => validateEnvironment({ VACANCY_GRPC_TIMEOUT_MS: 'too-fast' })).toThrow();
+  });
+
+  it('rejects invalid Redis and cache settings', () => {
+    expect(() => validateEnvironment({ REDIS_PORT: 'invalid' })).toThrow();
+    expect(() => validateEnvironment({ REDIS_DB: '16' })).toThrow();
+    expect(() => validateEnvironment({ CACHE_TTL_MS: '999' })).toThrow();
   });
 });

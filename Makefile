@@ -7,8 +7,9 @@ GATEWAY_DIR := gateway_service
 
 .PHONY: help dev up build rebuild up-build pull stop down down-volumes restart \
 	restart-vacancy restart-gateway ps config logs logs-vacancy logs-gateway \
-	logs-postgres postgres health health-vacancy health-gateway shell-vacancy \
-	shell-gateway db-shell vacancy-deps vacancy-run vacancy-build vacancy-test \
+	restart-nginx restart-redis logs-nginx logs-redis logs-postgres postgres redis \
+	health health-nginx health-redis health-vacancy health-gateway shell-vacancy \
+	shell-gateway db-shell redis-cli vacancy-deps vacancy-run vacancy-build vacancy-test \
 	vacancy-vet vacancy-format vacancy-check gateway-deps gateway-run \
 	gateway-build gateway-test gateway-lint gateway-format gateway-format-check \
 	gateway-check test vet fmt check sqlc-install sqlc-vet sqlc-generate \
@@ -38,8 +39,11 @@ help:
 	@echo "  make config           Validate development Compose config"
 	@echo "  make logs-vacancy     Follow vacancy_service logs"
 	@echo "  make logs-gateway     Follow gateway_service logs"
+	@echo "  make logs-nginx       Follow Nginx logs"
+	@echo "  make logs-redis       Follow Redis logs"
 	@echo "  make logs-postgres    Follow PostgreSQL logs"
 	@echo "  make db-shell         Open psql in the PostgreSQL container"
+	@echo "  make redis-cli        Open redis-cli with authentication"
 	@echo "  make down-volumes     Stop containers and DELETE database data"
 	@echo "  make prod-build       Build and run the production stack"
 	@echo "  make prod-down        Stop the production stack"
@@ -82,6 +86,12 @@ restart-vacancy:
 restart-gateway:
 	$(COMPOSE) restart gateway_service
 
+restart-nginx:
+	$(COMPOSE) restart nginx
+
+restart-redis:
+	$(COMPOSE) restart redis
+
 ps:
 	$(COMPOSE) ps
 
@@ -97,13 +107,28 @@ logs-vacancy:
 logs-gateway:
 	$(COMPOSE) logs -f gateway_service
 
+logs-nginx:
+	$(COMPOSE) logs -f nginx
+
+logs-redis:
+	$(COMPOSE) logs -f redis
+
 logs-postgres:
 	$(COMPOSE) logs -f postgres
 
 postgres:
 	$(COMPOSE) up -d postgres
 
-health: health-vacancy health-gateway
+redis:
+	$(COMPOSE) up -d redis
+
+health: health-redis health-vacancy health-gateway health-nginx
+
+health-nginx:
+	$(COMPOSE) exec -T nginx wget -qO- http://127.0.0.1/nginx-health
+
+health-redis:
+	$(COMPOSE) exec -T redis sh -c 'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping'
 
 health-vacancy:
 	$(COMPOSE) exec -T vacancy_service wget -qO- http://localhost:5003/health
@@ -119,6 +144,9 @@ shell-gateway:
 
 db-shell:
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+
+redis-cli:
+	$(COMPOSE) exec redis sh -c 'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD"'
 
 # vacancy_service commands run directly on the host.
 vacancy-deps:

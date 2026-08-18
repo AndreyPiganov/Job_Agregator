@@ -1,6 +1,6 @@
 services:
 
-# DB
+# Infrastructure
   postgres:
     image: postgres:16-alpine
     container_name: postgres
@@ -20,6 +20,30 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+    networks:
+      - job-network
+
+  redis:
+    container_name: redis
+    restart: unless-stopped
+    init: true
+    build:
+      context: ./redis
+      dockerfile: Dockerfile
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - job-network
 
@@ -76,8 +100,11 @@ services:
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-3000}:3000"
     volumes:
-      - ./gateway_service:/app
-      - gateway-node-modules:/app/node_modules
+      - ./gateway_service/src:/app/src
+      - ./gateway_service/test:/app/test
+      - ./gateway_service/nest-cli.json:/app/nest-cli.json:ro
+      - ./gateway_service/tsconfig.json:/app/tsconfig.json:ro
+      - ./gateway_service/tsconfig.build.json:/app/tsconfig.build.json:ro
       - ./var/log/gateway_service:/var/log/gateway-service
     environment:
       NODE_ENV: development
@@ -86,8 +113,19 @@ services:
       PORT: "3000"
       VACANCY_GRPC_URL: vacancy_service:50051
       VACANCY_GRPC_TIMEOUT_MS: ${VACANCY_GRPC_TIMEOUT_MS:-3000}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
+      REDIS_DB: "0"
+      REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-500}
+      CACHE_TTL_MS: ${CACHE_TTL_MS:-15000}
+      CACHE_NAMESPACE: ${CACHE_NAMESPACE:-job-aggregator:gateway}
+      CACHE_FAILURE_COOLDOWN_MS: ${CACHE_FAILURE_COOLDOWN_MS:-5000}
     depends_on:
       vacancy_service:
+        condition: service_healthy
+        restart: true
+      redis:
         condition: service_healthy
         restart: true
     healthcheck:
@@ -103,8 +141,34 @@ services:
         max-file: "3"
     networks:
       - job-network
-      
-# Other
+
+  nginx:
+    container_name: nginx
+    restart: unless-stopped
+    init: true
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${NGINX_PORT:-80}:80"
+    depends_on:
+      gateway_service:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - job-network
+
 networks:
   job-network:
     driver: bridge
@@ -113,4 +177,3 @@ volumes:
   postgres:
   go-mod-cache:
   go-build-cache:
-  gateway-node-modules:

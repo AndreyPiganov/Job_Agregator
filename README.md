@@ -2,8 +2,9 @@
 
 Система для хранения, обновления и поиска вакансий. Сейчас в проекте полностью
 реализован `vacancy_service`: HTTP API на Go, PostgreSQL, фильтрация, сортировка,
-валидация запросов и структурированное логирование. Также подготовлен базовый
-`gateway_service` на NestJS с health check, конфигурацией, Swagger и логированием.
+валидация запросов и структурированное логирование. Публичные HTTP-запросы
+проходят через Nginx и `gateway_service` на NestJS; Redis используется Gateway
+для краткоживущего кэша чтения.
 
 Каталоги `parser_service` и `auth_service` зарезервированы под будущие сервисы и
 пока не входят в Docker Compose.
@@ -20,6 +21,8 @@
 - HTTP-валидация и единый формат ошибок;
 - request ID, access logs и восстановление после panic;
 - JSON-логи в stdout и отдельные файлы по уровням;
+- Redis-кэш GET/list/search с инвалидaцией после записи;
+- единая внешняя точка входа через Nginx;
 - автоматическая подготовка схемы PostgreSQL при запуске.
 
 ## Технологии
@@ -27,6 +30,8 @@
 - Go 1.25;
 - Node.js 22 и NestJS 11;
 - PostgreSQL 16;
+- Redis 7.4;
+- Nginx;
 - `chi` — HTTP-маршрутизация;
 - `pgx` и `sqlc` — доступ к PostgreSQL;
 - `go-playground/validator` — валидация HTTP-запросов;
@@ -38,14 +43,20 @@
 
 ```mermaid
 flowchart LR
-    Client[HTTP client] --> Handler[HTTP handler]
-    Handler --> Service[Service]
+    Client[HTTP client] --> Nginx[Nginx]
+    Nginx --> Gateway[Nest Gateway]
+    Gateway --> Redis[(Redis cache)]
+    Gateway -->|gRPC| Handler[Vacancy transport]
+    Handler --> Service[Vacancy service]
     Service --> Repository[Repository]
     Repository --> SQLC[pgx / sqlc]
     SQLC --> PostgreSQL[(PostgreSQL)]
 ```
 
-- `handler` разбирает HTTP-запрос, валидирует DTO и формирует ответ;
+- Nginx принимает внешний HTTP-трафик и проксирует его в Gateway;
+- Gateway отвечает за публичный HTTP API, Swagger, DTO-валидацию и Redis-кэш;
+- `vacancy_service` предоставляет gRPC API для Gateway и сохраняет данные;
+- внутренний HTTP transport `vacancy_service` оставлен для диагностики и совместимости;
 - `service` содержит прикладные правила, нормализацию пагинации и периода;
 - `repository` выполняет запросы и транзакции;
 - `internal/db` содержит схему, SQL и сгенерированный `sqlc`-код.
@@ -67,8 +78,10 @@ Job_Agregator/
 │   └── internal/logging/     # настройка логирования
 ├── gateway_service/          # внешний HTTP gateway на NestJS
 │   ├── src/config/            # env validation и логирование
-│   ├── src/common/            # общие interceptors и responses
+│   ├── src/common/            # cache, interceptors и ошибки
 │   └── src/modules/           # функциональные Nest-модули
+├── nginx/                    # reverse proxy и единая точка входа
+├── redis/                    # конфигурация Redis-кэша
 ├── contracts/                # версионированные межсервисные protobuf-контракты
 ├── parser_service/           # запланирован
 ├── auth_service/             # запланирован
@@ -124,18 +137,22 @@ make ps
 
 После запуска:
 
-- gateway: `http://localhost:3000`;
-- Swagger gateway: `http://localhost:3000/api-docs`;
-- health gateway: `http://localhost:3000/health`;
+- публичный API через Nginx: `http://localhost`;
+- Swagger через Nginx: `http://localhost/api-docs`;
+- health Gateway через Nginx: `http://localhost/health`;
+- health самого Nginx: `http://localhost/nginx-health`;
+- прямой Gateway для development-отладки: `http://localhost:3000`;
 - внутренний HTTP API вакансий: `http://localhost:5003`;
 - внутренний gRPC API вакансий: `localhost:50051`;
 - health vacancy_service: `http://localhost:5003/health`;
-- PostgreSQL: `localhost:5425`.
+- PostgreSQL: `localhost:5425`;
+- Redis доступен только контейнерам в `job-network` и наружу не публикуется.
 
 Проверка:
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost/health
+curl http://localhost/nginx-health
 curl http://localhost:5003/health
 ```
 
@@ -167,6 +184,9 @@ make up             # запустить development-контейнеры
 make up-build       # пересобрать и запустить
 make logs-vacancy   # смотреть логи vacancy_service
 make logs-gateway   # смотреть логи gateway_service
+make logs-nginx     # смотреть access/error логи Nginx
+make logs-redis     # смотреть логи Redis
+make redis-cli      # открыть аутентифицированный redis-cli
 make down           # остановить, сохранив PostgreSQL volume
 make down-volumes   # остановить и удалить данные PostgreSQL
 ```
@@ -318,12 +338,19 @@ GET /api/v1/vacancies/filter?q=Backend&search_field=title&search_field=company_n
 | `DATABASE_URL` | обязательна для production | строка подключения сервиса |
 | `VACANCY_PORT` | `5003` | порт API на хосте |
 | `VACANCY_GRPC_PORT` | `50051` | development gRPC-порт vacancy_service на хосте |
+| `GATEWAY_PORT` | `3000` | прямой development-порт Gateway для отладки |
+| `NGINX_PORT` | `80` | внешний HTTP-порт Nginx |
+| `REDIS_PASSWORD` | `change-me` в development | пароль внутреннего Redis; обязателен в production |
+| `REDIS_CONNECT_TIMEOUT_MS` | `500` | таймаут подключения Gateway к Redis |
+| `CACHE_TTL_MS` | `15000` | TTL кэша вакансий в миллисекундах |
+| `CACHE_NAMESPACE` | `job-aggregator:gateway` | namespace ключей Gateway в Redis |
+| `CACHE_FAILURE_COOLDOWN_MS` | `5000` | пауза перед повторной попыткой после ошибки Redis |
 | `LOG_LEVEL` | `debug` в development, `info` в production | минимальный уровень stdout-логов |
 | `LOG_DIR` | `/var/log/vacancy-service` в контейнере | каталог файловых логов |
 
 Значения production-секретов нельзя хранить в Git. Перед production-запуском
-обязательно замените пароль и проверьте, что он совпадает в `POSTGRES_PASSWORD`
-и `DATABASE_URL`.
+обязательно замените пароли. Пароль PostgreSQL должен совпадать в
+`POSTGRES_PASSWORD` и `DATABASE_URL`, а `REDIS_PASSWORD` — в Redis и Gateway.
 
 ## Production
 
@@ -340,8 +367,9 @@ Production-образ:
 - ограничивает размер Docker JSON-логов;
 - корректно обрабатывает `SIGTERM` и завершает активные HTTP-запросы.
 
-Порт API привязан к `127.0.0.1`. Для внешнего доступа рекомендуется поставить
-перед сервисом reverse proxy с HTTPS.
+В production наружу публикуется только Nginx. Порты Gateway, Redis, gRPC и
+PostgreSQL остаются внутри Compose-сети. Для публичного окружения поверх этой
+конфигурации необходимо настроить TLS-сертификат и HTTPS.
 
 ## Логи
 

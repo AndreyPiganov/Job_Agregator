@@ -22,6 +22,48 @@ class EnvironmentVariables {
 
   @IsString()
   @IsNotEmpty()
+  REDIS_HOST = 'localhost';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  REDIS_PORT = 6379;
+
+  @IsString()
+  @IsNotEmpty()
+  REDIS_PASSWORD = 'change-me';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(15)
+  REDIS_DB = 0;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1000)
+  @Max(3600000)
+  CACHE_TTL_MS = 15000;
+
+  @IsString()
+  @IsNotEmpty()
+  CACHE_NAMESPACE = 'job-aggregator:gateway';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  @Max(60000)
+  REDIS_CONNECT_TIMEOUT_MS = 500;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  @Max(60000)
+  CACHE_FAILURE_COOLDOWN_MS = 5000;
+
+  @IsString()
+  @IsNotEmpty()
   VACANCY_GRPC_URL = 'localhost:50051';
 
   @Type(() => Number)

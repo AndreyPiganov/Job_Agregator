@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { ClientGrpc } from '@nestjs/microservices';
 import { of } from 'rxjs';
+import { AppCacheService } from '../../common/cache/app-cache.service';
 import {
   Vacancy,
   VacancyPeriod,
@@ -12,6 +13,7 @@ import { VacancyService } from './vacancy.service';
 
 describe('VacancyService', () => {
   let vacancyClient: jest.Mocked<VacancyServiceClient>;
+  let cache: jest.Mocked<Pick<AppCacheService, 'get' | 'set' | 'clear'>>;
   let service: VacancyService;
 
   beforeEach(() => {
@@ -26,10 +28,16 @@ describe('VacancyService', () => {
       getService: jest.fn(() => vacancyClient),
     } as unknown as ClientGrpc;
     const config = {
-      get: jest.fn(() => 3000),
+      get: jest.fn((key: string) => (key === 'cache.ttlMs' ? 15000 : 3000)),
     } as unknown as ConfigService;
 
-    service = new VacancyService(client, config);
+    cache = {
+      get: jest.fn().mockResolvedValue(undefined),
+      set: jest.fn().mockResolvedValue(undefined),
+      clear: jest.fn().mockResolvedValue(undefined),
+    };
+
+    service = new VacancyService(client, config, cache as unknown as AppCacheService);
     service.onModuleInit();
   });
 
@@ -40,6 +48,16 @@ describe('VacancyService', () => {
 
     expect(vacancyClient.getVacancy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ id: '42' }));
     expect(vacancy.id).toBe('42');
+    expect(cache.set).toHaveBeenCalledWith('vacancy:get:42', vacancy, 15000);
+  });
+
+  it('returns a cached vacancy without calling gRPC', async () => {
+    cache.get.mockResolvedValue(vacancyFixture({ id: '42', title: 'Cached developer' }));
+
+    const vacancy = await service.getById('42');
+
+    expect(vacancy.title).toBe('Cached developer');
+    expect(vacancyClient.getVacancy.mock.calls).toHaveLength(0);
   });
 
   it('maps HTTP filters to protobuf enums', async () => {
@@ -58,7 +76,7 @@ describe('VacancyService', () => {
     expect(vacancyClient.listVacancies.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         keyword: 'Go',
-        cities: ['Moscow', 'Kazan'],
+        cities: ['Kazan', 'Moscow'],
         search_fields: [
           VacancySearchField.VACANCY_SEARCH_FIELD_TITLE,
           VacancySearchField.VACANCY_SEARCH_FIELD_COMPANY_NAME,
@@ -118,6 +136,7 @@ describe('VacancyService', () => {
         vacancies: [expect.objectContaining({ title: 'Backend developer', salary: 200000, company_name: 'T-Bank' })],
       }),
     );
+    expect(cache.clear).toHaveBeenCalledTimes(2);
   });
 
   it('rejects an invalid empty response from the upstream service', async () => {

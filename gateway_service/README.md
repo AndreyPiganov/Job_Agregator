@@ -10,7 +10,9 @@ HTTP gateway для Job Aggregator на NestJS 11. Gateway принимает
 - unit- и e2e-тесты;
 - health check `GET /health`;
 - типизированный gRPC-клиент Vacancy с deadline для каждого вызова;
-- перевод gRPC-кодов ошибок в HTTP-статусы.
+- перевод gRPC-кодов ошибок в HTTP-статусы;
+- Redis-кэш чтения через официальный Nest `CacheModule`;
+- fail-open работа кэша: сбой Redis не блокирует обращения к `vacancy_service`.
 
 ## Требования для локального запуска
 
@@ -38,6 +40,12 @@ npm run start:dev
 
 - health check: `http://localhost:3000/health`;
 - Swagger: `http://localhost:3000/api-docs`.
+
+При запуске всего Compose публичный трафик идёт через Nginx:
+
+- API: `http://localhost`;
+- Swagger: `http://localhost/api-docs`;
+- прямой `localhost:3000` остаётся только development-входом для отладки.
 
 ## Vacancy HTTP API
 
@@ -125,8 +133,29 @@ make gateway-check
 | `LOG_DIR`                 | `logs`            | Каталог файловых логов                      |
 | `VACANCY_GRPC_URL`        | `localhost:50051` | Адрес gRPC-сервера Vacancy                  |
 | `VACANCY_GRPC_TIMEOUT_MS` | `3000`            | Deadline одного gRPC-вызова в миллисекундах |
+| `REDIS_HOST`              | `localhost`       | Хост Redis                                  |
+| `REDIS_PORT`              | `6379`            | Порт Redis                                  |
+| `REDIS_PASSWORD`          | `change-me`       | Пароль Redis                                |
+| `REDIS_DB`                | `0`               | Номер логической Redis DB                   |
+| `REDIS_CONNECT_TIMEOUT_MS` | `500`            | Таймаут подключения к Redis                 |
+| `CACHE_TTL_MS`            | `15000`           | TTL записей кэша в миллисекундах            |
+| `CACHE_NAMESPACE`         | `job-aggregator:gateway` | Namespace ключей кэша                |
+| `CACHE_FAILURE_COOLDOWN_MS` | `5000`          | Пауза перед повторной попыткой Redis         |
 
 Gateway не подключается напрямую к базе данных `vacancy_service`.
+
+## Redis-кэш
+
+Gateway кэширует успешные ответы `GetVacancy` и `ListVacancies`. Порядок
+городов и полей поиска нормализуется, поэтому эквивалентные фильтры используют
+один ключ. После успешного `CreateVacancy` или `BatchCreateVacancies` namespace
+кэша очищается. По умолчанию TTL равен 15 секундам: это ограничивает устаревание
+данных, если запись произошла напрямую через другой gRPC-клиент.
+
+Redis является ускорителем, а не источником истины. Ошибка чтения, записи или
+очистки логируется как `warn`, после чего Gateway продолжает работать через
+gRPC. Redis не нужен в `vacancy_service` на текущем этапе: сервис и PostgreSQL
+остаются владельцами данных, а кэш обслуживает именно публичные GET-запросы.
 
 ## Docker
 
@@ -136,6 +165,9 @@ Gateway не подключается напрямую к базе данных 
 make up-build
 make logs-gateway
 make health-gateway
+make logs-redis
+make redis-cli
+make health-nginx
 ```
 
 Development-образ использует Node 22 и watch mode. Production-образ собирается в
