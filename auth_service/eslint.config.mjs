@@ -1,35 +1,40 @@
-// @ts-check
 import eslint from '@eslint/js';
-import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
+import eslintConfigPrettier from 'eslint-config-prettier';
 import globals from 'globals';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import tseslint from 'typescript-eslint';
+
+const configDirectory = dirname(fileURLToPath(import.meta.url));
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    ignores: ['dist/**', 'coverage/**', 'node_modules/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
-  eslintPluginPrettierRecommended,
+  eslintConfigPrettier,
   {
     languageOptions: {
       globals: {
         ...globals.node,
         ...globals.jest,
       },
-      sourceType: 'commonjs',
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: import.meta.dirname,
+        tsconfigRootDir: configDirectory,
       },
     },
-  },
-  {
     rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-floating-promises': 'warn',
+      '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-unsafe-argument': 'warn',
-      "prettier/prettier": ["error", { endOfLine: "auto" }],
+      '@typescript-eslint/no-unsafe-assignment': 'warn',
+      '@typescript-eslint/no-unsafe-call': 'warn',
+      '@typescript-eslint/no-unsafe-member-access': 'warn',
+      '@typescript-eslint/no-unsafe-return': 'warn',
     },
   },
 );
