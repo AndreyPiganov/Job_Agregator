@@ -10,6 +10,8 @@ describe('validateEnvironment', () => {
       PORT: 3000,
       LOG_LEVEL: 'info',
       LOG_DIR: 'logs',
+      VACANCY_GRPC_URL: 'localhost:50051',
+      VACANCY_GRPC_TIMEOUT_MS: 3000,
     });
   });
 
@@ -21,5 +23,9 @@ describe('validateEnvironment', () => {
 
   it('rejects an invalid port', () => {
     expect(() => validateEnvironment({ PORT: 'invalid' })).toThrow();
+  });
+
+  it('rejects an invalid gRPC timeout', () => {
+    expect(() => validateEnvironment({ VACANCY_GRPC_TIMEOUT_MS: 'too-fast' })).toThrow();
   });
 });

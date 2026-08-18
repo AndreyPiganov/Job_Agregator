@@ -10,3 +10,17 @@ plugins:
     out: vacancy_service
     opt:
       - module=vacancy_service
+
+  - local: gateway_service/node_modules/.bin/protoc-gen-ts_proto
+    out: gateway_service/src/generated
+    strategy: all
+    opt:
+      - nestJs=true
+      - returnObservable=true
+      - forceLong=string
+      - useDate=false
+      - useOptionals=messages
+      - emitImportedFiles=false
+      - esModuleInterop=true
+      - snakeToCamel=false
+      - Mgoogle/protobuf/timestamp.proto=../../../common/proto/timestamp

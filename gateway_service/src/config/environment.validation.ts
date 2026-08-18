@@ -1,5 +1,5 @@
 import { plainToInstance, Type } from 'class-transformer';
-import { IsIn, IsInt, IsString, Max, Min, validateSync } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsString, Max, Min, validateSync } from 'class-validator';
 
 const environments = ['development', 'test', 'production'] as const;
 const logLevels = ['error', 'warn', 'info', 'http', 'verbose', 'debug'] as const;
@@ -19,6 +19,16 @@ class EnvironmentVariables {
 
   @IsString()
   LOG_DIR = 'logs';
+
+  @IsString()
+  @IsNotEmpty()
+  VACANCY_GRPC_URL = 'localhost:50051';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  @Max(60000)
+  VACANCY_GRPC_TIMEOUT_MS = 3000;
 }
 
 export function validateEnvironment(config: Record<string, unknown>): Record<string, unknown> {

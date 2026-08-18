@@ -31,7 +31,7 @@ help:
 	@echo "  make gateway-build    Build gateway_service"
 	@echo "  make gateway-run      Run gateway_service locally in watch mode"
 	@echo "  make check            Check and build all implemented services"
-	@echo "  make proto-generate   Generate Go code from protobuf contracts"
+	@echo "  make proto-generate   Generate Go/NestJS code and the protobuf descriptor"
 	@echo "  make sqlc-generate    Generate database code"
 	@echo ""
 	@echo "Utilities:"
@@ -109,7 +109,7 @@ health-vacancy:
 	$(COMPOSE) exec -T vacancy_service wget -qO- http://localhost:5003/health
 
 health-gateway:
-	$(COMPOSE) exec -T gateway_service wget -qO- http://localhost:3000/health
+	$(COMPOSE) exec -T gateway_service wget -qO- http://127.0.0.1:3000/health
 
 shell-vacancy:
 	$(COMPOSE) exec vacancy_service sh

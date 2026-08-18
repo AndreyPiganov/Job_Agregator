@@ -28,6 +28,7 @@ proto-tools:
 
 proto-generate:
 	cd .. && buf lint && buf generate
+	cd .. && buf build -o gateway_service/src/generated/contracts.binpb
 
 sqlc-install:
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
