@@ -33,6 +33,8 @@ services:
     command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 5s
@@ -89,6 +91,101 @@ services:
     networks:
       - job-network
 
+## Auth
+  auth_service:
+    container_name: auth_service
+    restart: unless-stopped
+    init: true
+    build:
+      context: ./auth_service
+      dockerfile: Dockerfile_dev
+    command: ["sh", "-c", "npm run prisma:migrate:deploy && npm run start:dev"]
+    ports:
+      - "127.0.0.1:${AUTH_GRPC_PORT:-5005}:5005"
+    volumes:
+      - ./auth_service/src:/app/src
+      - ./auth_service/prisma:/app/prisma
+      - ./auth_service/prisma.config.ts:/app/prisma.config.ts:ro
+      - ./auth_service/nest-cli.json:/app/nest-cli.json:ro
+      - ./auth_service/tsconfig.json:/app/tsconfig.json:ro
+      - ./auth_service/tsconfig.build.json:/app/tsconfig.build.json:ro
+      - ./var/log/auth_service:/var/log/auth-service
+    environment:
+      NODE_ENV: development
+      GRPC_HOST: 0.0.0.0
+      GRPC_PORT: "5005"
+      USER_GRPC_URL: user_service:5000
+      USER_GRPC_TIMEOUT_MS: ${USER_GRPC_TIMEOUT_MS:-3000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=auth
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
+      REDIS_DB: "1"
+      REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-500}
+      AUTH_SESSION_NAMESPACE: ${AUTH_SESSION_NAMESPACE:-job-aggregator:auth}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-development-refresh-secret-change-before-production}
+      JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-600}
+      JWT_REFRESH_TTL_SECONDS: ${JWT_REFRESH_TTL_SECONDS:-2592000}
+      JWT_ISSUER: ${JWT_ISSUER:-job-aggregator-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-job-aggregator-services}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      LOG_DIR: /var/log/auth-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
+      user_service:
+        condition: service_started
+        restart: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - job-network
+
+## User
+  user_service:
+    container_name: user_service
+    restart: unless-stopped
+    init: true
+    build:
+      context: ./user_service
+      dockerfile: Dockerfile_dev
+    command: ["sh", "-c", "npm run prisma:migrate:deploy && npm run start:dev"]
+    ports:
+      - "127.0.0.1:${USER_GRPC_PORT:-5000}:5000"
+    volumes:
+      - ./user_service/src:/app/src
+      - ./user_service/prisma:/app/prisma
+      - ./user_service/prisma.config.ts:/app/prisma.config.ts:ro
+      - ./user_service/nest-cli.json:/app/nest-cli.json:ro
+      - ./user_service/tsconfig.json:/app/tsconfig.json:ro
+      - ./user_service/tsconfig.build.json:/app/tsconfig.build.json:ro
+      - ./var/log/user_service:/var/log/user-service
+    environment:
+      NODE_ENV: development
+      GRPC_HOST: 0.0.0.0
+      GRPC_PORT: "5000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=user
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      LOG_DIR: /var/log/user-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - job-network
+
 ## Gateway
   gateway_service:
     container_name: gateway_service
@@ -111,6 +208,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       LOG_DIR: /var/log/gateway-service
       PORT: "3000"
+      AUTH_GRPC_URL: auth_service:5005
+      AUTH_GRPC_TIMEOUT_MS: ${AUTH_GRPC_TIMEOUT_MS:-3000}
+      USER_GRPC_URL: user_service:5000
+      USER_GRPC_TIMEOUT_MS: ${USER_GRPC_TIMEOUT_MS:-3000}
       VACANCY_GRPC_URL: vacancy_service:50051
       VACANCY_GRPC_TIMEOUT_MS: ${VACANCY_GRPC_TIMEOUT_MS:-3000}
       REDIS_HOST: redis
@@ -121,9 +222,17 @@ services:
       CACHE_TTL_MS: ${CACHE_TTL_MS:-15000}
       CACHE_NAMESPACE: ${CACHE_NAMESPACE:-job-aggregator:gateway}
       CACHE_FAILURE_COOLDOWN_MS: ${CACHE_FAILURE_COOLDOWN_MS:-5000}
+      JWT_ISSUER: ${JWT_ISSUER:-job-aggregator-auth}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-job-aggregator-services}
     depends_on:
       vacancy_service:
         condition: service_healthy
+        restart: true
+      auth_service:
+        condition: service_started
+        restart: true
+      user_service:
+        condition: service_started
         restart: true
       redis:
         condition: service_healthy

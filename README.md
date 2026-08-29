@@ -1,13 +1,12 @@
 # Job Aggregator
 
-Система для хранения, обновления и поиска вакансий. Сейчас в проекте полностью
-реализован `vacancy_service`: HTTP API на Go, PostgreSQL, фильтрация, сортировка,
-валидация запросов и структурированное логирование. Публичные HTTP-запросы
-проходят через Nginx и `gateway_service` на NestJS; Redis используется Gateway
-для краткоживущего кэша чтения.
+Система для хранения, обновления и поиска вакансий. `vacancy_service` реализует
+домен вакансий на Go, `gateway_service` предоставляет публичный NestJS HTTP API,
+`auth_service` владеет identity/credentials, регистрацией, JWT и refresh-сессиями,
+а `user_service` — профилями соискателей и резюме. Сервисы используют внутренний gRPC,
+Nginx остаётся единой внешней точкой входа.
 
-Каталоги `parser_service` и `auth_service` зарезервированы под будущие сервисы и
-пока не входят в Docker Compose.
+`parser_service` пока зарезервирован под будущую реализацию.
 
 ## Возможности
 
@@ -22,6 +21,15 @@
 - request ID, access logs и восстановление после panic;
 - JSON-логи в stdout и отдельные файлы по уровням;
 - Redis-кэш GET/list/search с инвалидaцией после записи;
+- регистрация и login по email либо номеру телефона;
+- локально проверяемый RS256 access JWT и refresh JWT с атомарной rotation через Redis;
+- Prisma-модели identity/credentials/OAuth в auth и неиспользуемой пока таблицы `auth.email_codes`;
+- Prisma-модели профилей, образования, опыта, резюме и поисковых справочников в user;
+- контакты профиля: регистрационный email/телефон добавляется автоматически, Telegram и GitHub — добровольно;
+- versioned data migration со странами ISO 3166-1 и языками ISO 639-1;
+- справочники направлений образования ОКСО, профессиональных ролей hh.ru и базовых навыков;
+- HTTP auth/user API в Gateway с Passport JWT и gRPC-вызовами внутренних сервисов;
+- unary gRPC API `user_service` для user/profile/resume;
 - единая внешняя точка входа через Nginx;
 - автоматическая подготовка схемы PostgreSQL при запуске.
 
@@ -31,6 +39,7 @@
 - Node.js 22 и NestJS 11;
 - PostgreSQL 16;
 - Redis 7.4;
+- Prisma 7 для PostgreSQL-моделей auth- и user-сервисов;
 - Nginx;
 - `chi` — HTTP-маршрутизация;
 - `pgx` и `sqlc` — доступ к PostgreSQL;
@@ -46,6 +55,14 @@ flowchart LR
     Client[HTTP client] --> Nginx[Nginx]
     Nginx --> Gateway[Nest Gateway]
     Gateway --> Redis[(Redis cache)]
+    Gateway -->|register login refresh logout gRPC| Auth[Auth gRPC service]
+    Auth -. RSA public key .-> Gateway
+    Auth --> AuthRedis[(Redis sessions)]
+    Auth -->|unary gRPC CreateUser| UserService[User gRPC service]
+    Gateway -->|Profile and Resume gRPC| UserService
+    UserService --> UserDB[(PostgreSQL user schema)]
+    Auth --> AuthDB[(PostgreSQL auth schema)]
+    Auth -. future email codes .-> AuthDB
     Gateway -->|gRPC| Handler[Vacancy transport]
     Handler --> Service[Vacancy service]
     Service --> Repository[Repository]
@@ -56,6 +73,15 @@ flowchart LR
 - Nginx принимает внешний HTTP-трафик и проксирует его в Gateway;
 - Gateway отвечает за публичный HTTP API, Swagger, DTO-валидацию и Redis-кэш;
 - `vacancy_service` предоставляет gRPC API для Gateway и сохраняет данные;
+- `auth_service` предоставляет внутренние unary gRPC-методы регистрации,
+  login, refresh, validate и logout;
+- Gateway локально проверяет короткоживущий access JWT публичным RSA-ключом;
+  `validate` остаётся для будущих чувствительных операций;
+- `auth_service` владеет identity, password/OAuth credentials, ролями и статусом доступа;
+- `user_service` владеет user-domain anchor, профилями, образованием, опытом и резюме;
+- регистрация требует имя и фамилию, создаёт `PENDING` identity, идемпотентно вызывает `CreateUser` по gRPC и только затем активирует identity;
+- `email_codes` уже создаётся миграцией, но не участвует в регистрации до
+  подключения SMTP/подтверждения email;
 - внутренний HTTP transport `vacancy_service` оставлен для диагностики и совместимости;
 - `service` содержит прикладные правила, нормализацию пагинации и периода;
 - `repository` выполняет запросы и транзакции;
@@ -84,7 +110,8 @@ Job_Agregator/
 ├── redis/                    # конфигурация Redis-кэша
 ├── contracts/                # версионированные межсервисные protobuf-контракты
 ├── parser_service/           # запланирован
-├── auth_service/             # запланирован
+├── auth_service/             # NestJS gRPC, Prisma, JWT и Redis-сессии
+├── user_service/             # NestJS gRPC, Prisma, профили и резюме
 ├── docker-compose.yml        # development
 ├── docker-compose.prod.yml   # production
 ├── Makefile                  # единые команды запуска и проверок
@@ -144,9 +171,13 @@ make ps
 - прямой Gateway для development-отладки: `http://localhost:3000`;
 - внутренний HTTP API вакансий: `http://localhost:5003`;
 - внутренний gRPC API вакансий: `localhost:50051`;
+- внутренний gRPC API auth-сервиса: `localhost:5005`;
+- внутренний gRPC API user-сервиса: `localhost:5000`;
 - health vacancy_service: `http://localhost:5003/health`;
 - PostgreSQL: `localhost:5425`;
-- Redis доступен только контейнерам в `job-network` и наружу не публикуется.
+- Redis в development доступен контейнерам в `job-network` и на
+  `127.0.0.1:${REDIS_PORT:-6379}` для запуска NestJS-сервисов прямо из WSL;
+  production Compose наружу его не публикует.
 
 Проверка:
 
@@ -199,10 +230,38 @@ make vet              # выполнить go vet
 make vacancy-build    # собрать vacancy_service
 make gateway-build    # собрать gateway_service
 make gateway-check    # проверить форматирование, lint, тесты и сборку gateway
+make auth-build       # собрать auth_service
+make auth-check       # Prisma validate, формат, lint, тесты и сборка auth
+make user-build       # собрать user_service
+make user-check       # Prisma validate, формат, lint, тесты и сборка user
 make check            # проверить и собрать все реализованные сервисы
-make proto-generate   # обновить Go-код из protobuf-контрактов
+make proto-generate   # обновить весь Go/NestJS protobuf-код и descriptor sets
 make sqlc-generate    # обновить код, сгенерированный sqlc
 ```
+
+Полный HTTP smoke-тест регистрирует отдельного пользователя, проходит auth,
+profile, resume и vacancy API, а затем измеряет прогретые GET-запросы:
+
+```bash
+node scripts/http-smoke.mjs
+```
+
+Адрес Gateway, количество запросов и конкурентность можно изменить без правки
+скрипта:
+
+```bash
+BASE_URL=http://127.0.0.1:3000 \
+BENCHMARK_REQUESTS=100 \
+BENCHMARK_CONCURRENCY=10 \
+node scripts/http-smoke.mjs
+```
+
+Коллекция `postman/job-aggregator.postman_collection.json` содержит все HTTP
+маршруты Gateway и готова к запуску целиком через Postman Collection Runner.
+Токены и ID созданных сущностей записываются в переменные коллекции
+автоматически. Дополнительные environments, negative/security checks,
+read-only performance collection и blueprint визуального Flow описаны в
+`postman/README.md`.
 
 ## HTTP API
 
@@ -342,7 +401,7 @@ GET /api/v1/vacancies/filter?q=Backend&search_field=title&search_field=company_n
 | `NGINX_PORT` | `80` | внешний HTTP-порт Nginx |
 | `REDIS_PASSWORD` | `change-me` в development | пароль внутреннего Redis; обязателен в production |
 | `REDIS_CONNECT_TIMEOUT_MS` | `500` | таймаут подключения Gateway к Redis |
-| `CACHE_TTL_MS` | `15000` | TTL кэша вакансий в миллисекундах |
+| `CACHE_TTL_MS` | `15000` | TTL записей Gateway-кэша в миллисекундах |
 | `CACHE_NAMESPACE` | `job-aggregator:gateway` | namespace ключей Gateway в Redis |
 | `CACHE_FAILURE_COOLDOWN_MS` | `5000` | пауза перед повторной попыткой после ошибки Redis |
 | `LOG_LEVEL` | `debug` в development, `info` в production | минимальный уровень stdout-логов |
@@ -465,7 +524,8 @@ EXISTS` и `CREATE INDEX IF NOT EXISTS`. Для сложных изменени�
 ## Планы развития
 
 - реализовать `parser_service` для сбора вакансий из внешних источников;
-- реализовать `auth_service` и разграничение доступа;
-- вынести изменения схемы в отдельный migration tool;
+- подключить подтверждение email и OAuth к `auth_service`;
+- добавить разграничение доступа к доменным endpoints;
+- вынести изменения схемы vacancy-сервиса в отдельный migration tool;
 - добавить интеграционные тесты PostgreSQL;
 - добавить OpenAPI-спецификацию и метрики.

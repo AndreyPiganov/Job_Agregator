@@ -1,0 +1,494 @@
+{
+  "info": {
+    "_postman_id": "f45ec37f-60ce-45de-a0a4-54566ced3e4d",
+    "name": "Job Aggregator API",
+    "description": "All public Gateway HTTP endpoints. Run folders in collection order: setup variables and created entity IDs are saved automatically. Use the Local WSL, Docker via Nginx, or Production template environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Response is not a server error', function () {",
+          "  pm.expect(pm.response.code).to.be.below(500);",
+          "});",
+          "pm.test('Response is JSON', function () {",
+          "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "});",
+          "pm.test('Response time is within the diagnostic limit', function () {",
+          "  pm.expect(pm.response.responseTime).to.be.below(Number(pm.collectionVariables.get('max_response_time_ms')));",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Setup and Auth",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/health",
+            "description": "Gateway liveness check."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const email = `postman.${Date.now()}@example.com`;",
+                  "pm.collectionVariables.set('email', email);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('user_id', json.user.id);",
+                  "pm.collectionVariables.set('access_token', json.tokens.access_token);",
+                  "pm.collectionVariables.set('refresh_token', json.tokens.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"first_name\": \"Иван\",\n  \"last_name\": \"Петров\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/register"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('access_token', json.tokens.access_token);",
+                  "pm.collectionVariables.set('refresh_token', json.tokens.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/login"
+          }
+        },
+        {
+          "name": "Refresh token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('access_token', json.access_token);",
+                  "pm.collectionVariables.set('refresh_token', json.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/refresh"
+          }
+        },
+        {
+          "name": "Current principal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('JWT belongs to registered user', () => pm.expect(pm.response.json().user_id).to.eql(pm.collectionVariables.get('user_id')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/auth/me"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. User Profile",
+      "item": [
+        {
+          "name": "Get profile",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/users/me/profile"
+          }
+        },
+        {
+          "name": "Upsert profile",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Иван\",\n  \"last_name\": \"Петров\",\n  \"middle_name\": \"Сергеевич\",\n  \"birth_date\": \"1995-05-20\",\n  \"gender\": 1,\n  \"city\": \"Москва\",\n  \"about\": \"Профиль для проверки API\",\n  \"relocation_readiness\": 2,\n  \"languages\": [{ \"code\": \"ru\", \"proficiency\": 6 }],\n  \"citizenship_codes\": [\"RU\"],\n  \"contacts\": {\n    \"email\": \"{{email}}\",\n    \"telegram_username\": \"postman_user\",\n    \"github_username\": \"postman-user\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/profile"
+          }
+        },
+        {
+          "name": "Create education",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('education_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"institution_name\": \"МГТУ им. Н. Э. Баумана\",\n  \"level\": 4,\n  \"faculty\": \"Информатика\",\n  \"started_at\": \"2014-09-01\",\n  \"ended_at\": \"2018-06-30\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/educations"
+          }
+        },
+        {
+          "name": "Update education",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"institution_name\": \"МГТУ им. Н. Э. Баумана\",\n  \"level\": 4,\n  \"faculty\": \"Программная инженерия\",\n  \"started_at\": \"2014-09-01\",\n  \"ended_at\": \"2018-06-30\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/educations/{{education_id}}"
+          }
+        },
+        {
+          "name": "Create work experience",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('work_experience_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Postman Test Company\",\n  \"position\": \"Backend-разработчик\",\n  \"description\": \"Разработка микросервисов\",\n  \"city\": \"Москва\",\n  \"company_url\": \"https://example.com\",\n  \"started_at\": \"2020-01-01\",\n  \"ended_at\": \"2024-01-01\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/work-experiences"
+          }
+        },
+        {
+          "name": "Update work experience",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Postman Test Company\",\n  \"position\": \"Senior Backend-разработчик\",\n  \"description\": \"Разработка и сопровождение микросервисов\",\n  \"city\": \"Москва\",\n  \"company_url\": \"https://example.com\",\n  \"started_at\": \"2020-01-01\",\n  \"ended_at\": \"2024-01-01\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/work-experiences/{{work_experience_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Vacancies",
+      "auth": { "type": "noauth" },
+      "item": [
+        {
+          "name": "Create vacancy",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "exec": ["pm.collectionVariables.set('vacancy_link', `https://example.com/vacancies/postman-${Date.now()}`);"] }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('vacancy_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Backend Engineer Postman\",\n  \"description\": \"Vacancy created from Postman\",\n  \"salary\": 250000,\n  \"link\": \"{{vacancy_link}}\",\n  \"city\": \"Moscow\",\n  \"company_name\": \"Postman Test Company\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/vacancies"
+          }
+        },
+        {
+          "name": "Create vacancy batch",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const suffix = Date.now();",
+                  "pm.collectionVariables.set('batch_vacancy_link_1', `https://example.com/vacancies/postman-${suffix}-1`);",
+                  "pm.collectionVariables.set('batch_vacancy_link_2', `https://example.com/vacancies/postman-${suffix}-2`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('HTTP 201', () => pm.response.to.have.status(201));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"title\": \"Go Developer Postman\",\n    \"description\": \"First batch vacancy\",\n    \"salary\": 220000,\n    \"link\": \"{{batch_vacancy_link_1}}\",\n    \"city\": \"Moscow\",\n    \"company_name\": \"Postman Test Company\"\n  },\n  {\n    \"title\": \"TypeScript Developer Postman\",\n    \"description\": \"Second batch vacancy\",\n    \"salary\": 210000,\n    \"link\": \"{{batch_vacancy_link_2}}\",\n    \"city\": \"Kazan\",\n    \"company_name\": \"Postman Test Company\"\n  }\n]",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/vacancies/batch"
+          }
+        },
+        {
+          "name": "List vacancies",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/vacancies?page=1&items_per_page=25"
+          }
+        },
+        {
+          "name": "Filter vacancies",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/vacancies/filter?q=Backend&search_field=title&city=Moscow&min_salary=100000&sort=salary_desc&period=week&page=1&items_per_page=25"
+          }
+        },
+        {
+          "name": "Get vacancy",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/vacancies/{{vacancy_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Resumes",
+      "item": [
+        {
+          "name": "Create resume",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('resume_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Backend-разработчик\",\n  \"about\": \"Резюме для проверки API\",\n  \"city\": \"Москва\",\n  \"visibility\": 2,\n  \"search_status\": 1,\n  \"business_trip_readiness\": 2,\n  \"salary_amount\": 250000,\n  \"salary_currency\": \"RUB\",\n  \"employment_types\": [1],\n  \"work_schedules\": [1],\n  \"work_formats\": [2],\n  \"education_ids\": [\"{{education_id}}\"],\n  \"work_experience_ids\": [\"{{work_experience_id}}\"],\n  \"skill_ids\": [],\n  \"professional_role_ids\": [],\n  \"certificates\": [{\n    \"title\": \"Postman API testing\",\n    \"issuer\": \"Job Aggregator\",\n    \"url\": \"https://example.com/certificate\",\n    \"achieved_at\": \"2025-01-01\"\n  }]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/resumes"
+          }
+        },
+        {
+          "name": "List resumes",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/api/v1/users/me/resumes" }
+        },
+        {
+          "name": "Get resume",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/api/v1/users/me/resumes/{{resume_id}}" }
+        },
+        {
+          "name": "Update resume",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Senior Backend-разработчик\",\n  \"about\": \"Обновлённое резюме для проверки API\",\n  \"city\": \"Москва\",\n  \"visibility\": 2,\n  \"search_status\": 1,\n  \"business_trip_readiness\": 2,\n  \"salary_amount\": 280000,\n  \"salary_currency\": \"RUB\",\n  \"employment_types\": [1],\n  \"work_schedules\": [1],\n  \"work_formats\": [2],\n  \"education_ids\": [\"{{education_id}}\"],\n  \"work_experience_ids\": [\"{{work_experience_id}}\"],\n  \"skill_ids\": [],\n  \"professional_role_ids\": [],\n  \"certificates\": []\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/resumes/{{resume_id}}"
+          }
+        },
+        {
+          "name": "Set resume status",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": 2\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/users/me/resumes/{{resume_id}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Cleanup",
+      "item": [
+        {
+          "name": "Delete resume",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": { "method": "DELETE", "header": [], "url": "{{base_url}}/api/v1/users/me/resumes/{{resume_id}}" }
+        },
+        {
+          "name": "Delete education",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": { "method": "DELETE", "header": [], "url": "{{base_url}}/api/v1/users/me/educations/{{education_id}}" }
+        },
+        {
+          "name": "Delete work experience",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"] } }],
+          "request": { "method": "DELETE", "header": [], "url": "{{base_url}}/api/v1/users/me/work-experiences/{{work_experience_id}}" }
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Session was revoked', () => pm.expect(pm.response.json().revoked).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/logout"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:3000", "type": "string" },
+    { "key": "email", "value": "", "type": "string" },
+    { "key": "password", "value": "strong-password-123", "type": "string" },
+    { "key": "user_id", "value": "", "type": "string" },
+    { "key": "access_token", "value": "", "type": "string" },
+    { "key": "refresh_token", "value": "", "type": "string" },
+    { "key": "education_id", "value": "", "type": "string" },
+    { "key": "work_experience_id", "value": "", "type": "string" },
+    { "key": "resume_id", "value": "", "type": "string" },
+    { "key": "vacancy_id", "value": "", "type": "string" },
+    { "key": "vacancy_link", "value": "", "type": "string" },
+    { "key": "batch_vacancy_link_1", "value": "", "type": "string" },
+    { "key": "batch_vacancy_link_2", "value": "", "type": "string" },
+    { "key": "max_response_time_ms", "value": "2000", "type": "string" }
+  ]
+}

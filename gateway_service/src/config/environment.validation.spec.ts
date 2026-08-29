@@ -8,6 +8,8 @@ describe('validateEnvironment', () => {
     expect(config).toMatchObject({
       NODE_ENV: 'development',
       PORT: 3000,
+      JWT_ISSUER: 'job-aggregator-auth',
+      JWT_AUDIENCE: 'job-aggregator-services',
       LOG_LEVEL: 'info',
       LOG_DIR: 'logs',
       REDIS_HOST: 'localhost',
@@ -18,6 +20,10 @@ describe('validateEnvironment', () => {
       CACHE_NAMESPACE: 'job-aggregator:gateway',
       REDIS_CONNECT_TIMEOUT_MS: 500,
       CACHE_FAILURE_COOLDOWN_MS: 5000,
+      AUTH_GRPC_URL: 'localhost:5005',
+      AUTH_GRPC_TIMEOUT_MS: 3000,
+      USER_GRPC_URL: 'localhost:5000',
+      USER_GRPC_TIMEOUT_MS: 3000,
       VACANCY_GRPC_URL: 'localhost:50051',
       VACANCY_GRPC_TIMEOUT_MS: 3000,
     });
@@ -35,11 +41,19 @@ describe('validateEnvironment', () => {
 
   it('rejects an invalid gRPC timeout', () => {
     expect(() => validateEnvironment({ VACANCY_GRPC_TIMEOUT_MS: 'too-fast' })).toThrow();
+    expect(() => validateEnvironment({ AUTH_GRPC_TIMEOUT_MS: 'too-fast' })).toThrow();
+    expect(() => validateEnvironment({ USER_GRPC_TIMEOUT_MS: 'too-fast' })).toThrow();
   });
 
   it('rejects invalid Redis and cache settings', () => {
     expect(() => validateEnvironment({ REDIS_PORT: 'invalid' })).toThrow();
     expect(() => validateEnvironment({ REDIS_DB: '16' })).toThrow();
     expect(() => validateEnvironment({ CACHE_TTL_MS: '999' })).toThrow();
+  });
+
+  it('rejects an invalid access-token public key', () => {
+    expect(() => validateEnvironment({ JWT_ACCESS_PUBLIC_KEY_BASE64: 'not-a-public-key' })).toThrow(
+      'JWT_ACCESS_PUBLIC_KEY_BASE64',
+    );
   });
 });

@@ -1,0 +1,188 @@
+{
+  "info": {
+    "_postman_id": "03436dc2-abda-4370-8250-0c78864968f0",
+    "name": "Job Aggregator API - Negative and Security Checks",
+    "description": "Read-only or rejected requests that verify HTTP validation and authentication boundaries. The collection is safe to rerun and expects only 400 or 401 responses.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.collectionVariables.set('missing_email', `missing.${Date.now()}@example.com`);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Response is JSON', function () {",
+          "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "});",
+          "pm.test('Response time is within the diagnostic limit', function () {",
+          "  pm.expect(pm.response.responseTime).to.be.below(Number(pm.collectionVariables.get('max_response_time_ms')));",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth validation",
+      "item": [
+        {
+          "name": "Reject weak registration password",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{missing_email}}\",\n  \"password\": \"weak\",\n  \"first_name\": \"Иван\",\n  \"last_name\": \"Петров\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/register"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 400', () => pm.response.to.have.status(400));"] } }]
+        },
+        {
+          "name": "Reject email and phone together",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{missing_email}}\",\n  \"phone_number\": \"+79991234567\",\n  \"password\": \"strong-password-123\",\n  \"first_name\": \"Иван\",\n  \"last_name\": \"Петров\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/register"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 400', () => pm.response.to.have.status(400));"] } }]
+        },
+        {
+          "name": "Reject malformed login identifier",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"not-an-email-or-phone\",\n  \"password\": \"strong-password-123\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/login"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 400', () => pm.response.to.have.status(400));"] } }]
+        },
+        {
+          "name": "Reject unknown credentials",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{missing_email}}\",\n  \"password\": \"strong-password-123\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/login"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 401', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Reject invalid refresh token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"not-a-refresh-token\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/auth/refresh"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 401', () => pm.response.to.have.status(401));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "Bearer authentication",
+      "item": [
+        {
+          "name": "Reject missing Bearer token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/auth/me"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 401', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Reject malformed Bearer token",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "not-a-jwt", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/auth/me"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 401', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Reject profile request without token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/users/me/profile"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 401', () => pm.response.to.have.status(401));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "Vacancy validation",
+      "item": [
+        {
+          "name": "Reject incomplete vacancy",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Missing required fields\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/api/v1/vacancies"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 400', () => pm.response.to.have.status(400));"] } }]
+        },
+        {
+          "name": "Reject invalid vacancy ID",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/vacancies/not-a-positive-integer"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('HTTP 400', () => pm.response.to.have.status(400));"] } }]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:3000", "type": "string" },
+    { "key": "missing_email", "value": "", "type": "string" },
+    { "key": "max_response_time_ms", "value": "2000", "type": "string" }
+  ]
+}

@@ -15,6 +15,7 @@ async function bootstrap() {
     .setTitle('Job Aggregator Gateway API')
     .setDescription('Public HTTP API for Job Aggregator services')
     .setVersion('1.0')
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

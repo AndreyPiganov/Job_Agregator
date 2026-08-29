@@ -1,0 +1,104 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["auth"]
+}
+
+model Identity {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String?        @unique @db.VarChar(320)
+  phoneNumber     String?        @unique @map("phone_number") @db.VarChar(20)
+  roles           IdentityRole[] @default([APPLICANT])
+  status          IdentityStatus @default(PENDING)
+  emailVerifiedAt DateTime?      @map("email_verified_at") @db.Timestamptz(3)
+  phoneVerifiedAt DateTime?      @map("phone_verified_at") @db.Timestamptz(3)
+  lastLoginAt     DateTime?      @map("last_login_at") @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  passwordCredential PasswordCredential?
+  externalIdentities ExternalIdentity[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("identities")
+  @@schema("auth")
+}
+
+model PasswordCredential {
+  identityId        String   @id @map("identity_id") @db.Uuid
+  passwordHash      String   @map("password_hash") @db.VarChar(255)
+  passwordChangedAt DateTime @default(now()) @map("password_changed_at") @db.Timestamptz(3)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  @@map("password_credentials")
+  @@schema("auth")
+}
+
+model ExternalIdentity {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identityId      String   @map("identity_id") @db.Uuid
+  provider        String   @db.VarChar(50)
+  providerSubject String   @map("provider_subject") @db.VarChar(255)
+  email           String?  @db.VarChar(320)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerSubject])
+  @@index([identityId])
+  @@map("external_identities")
+  @@schema("auth")
+}
+
+// Reserved for email verification and password reset. Registration still
+// intentionally bypasses this table until SMTP delivery is implemented.
+model EmailCode {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email      String           @db.VarChar(320)
+  codeHash   String           @map("code_hash") @db.VarChar(128)
+  purpose    EmailCodePurpose
+  expiresAt  DateTime         @map("expires_at") @db.Timestamptz(3)
+  consumedAt DateTime?        @map("consumed_at") @db.Timestamptz(3)
+  attempts   Int              @default(0) @db.SmallInt
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([email, purpose, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("email_codes")
+  @@schema("auth")
+}
+
+enum EmailCodePurpose {
+  REGISTRATION
+  PASSWORD_RESET
+
+  @@schema("auth")
+}
+
+enum IdentityRole {
+  APPLICANT
+  EMPLOYER
+  ADMIN
+
+  @@map("identity_role")
+  @@schema("auth")
+}
+
+enum IdentityStatus {
+  PENDING
+  ACTIVE
+  BLOCKED
+  DELETED
+
+  @@map("identity_status")
+  @@schema("auth")
+}

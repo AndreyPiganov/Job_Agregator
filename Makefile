@@ -2,17 +2,23 @@ COMPOSE := docker compose
 COMPOSE_PROD := docker compose -f docker-compose.prod.yml
 VACANCY_DIR := vacancy_service
 GATEWAY_DIR := gateway_service
+AUTH_DIR := auth_service
+USER_DIR := user_service
 
 .DEFAULT_GOAL := help
 
 .PHONY: help dev up build rebuild up-build pull stop down down-volumes restart \
-	restart-vacancy restart-gateway ps config logs logs-vacancy logs-gateway \
+	restart-vacancy restart-auth restart-user restart-gateway ps config logs logs-vacancy logs-auth logs-user logs-gateway \
 	restart-nginx restart-redis logs-nginx logs-redis logs-postgres postgres redis \
 	health health-nginx health-redis health-vacancy health-gateway shell-vacancy \
-	shell-gateway db-shell redis-cli vacancy-deps vacancy-run vacancy-build vacancy-test \
+	shell-auth shell-user shell-gateway db-shell redis-cli vacancy-deps vacancy-run vacancy-build vacancy-test \
 	vacancy-vet vacancy-format vacancy-check gateway-deps gateway-run \
 	gateway-build gateway-test gateway-lint gateway-format gateway-format-check \
-	gateway-check test vet fmt check sqlc-install sqlc-vet sqlc-generate \
+	gateway-check auth-deps auth-run auth-build auth-test auth-lint auth-format \
+	auth-format-check auth-prisma-generate auth-prisma-validate auth-prisma-migrate auth-check \
+	user-deps user-run user-build user-test user-lint user-format user-format-check \
+	user-prisma-generate user-prisma-validate user-prisma-migrate user-check \
+	test vet fmt check sqlc-install sqlc-vet sqlc-generate \
 	proto-tools proto-generate \
 	prod-config prod-up prod-build prod-down prod-ps prod-logs
 
@@ -31,6 +37,11 @@ help:
 	@echo "  make vacancy-build    Build vacancy_service"
 	@echo "  make gateway-build    Build gateway_service"
 	@echo "  make gateway-run      Run gateway_service locally in watch mode"
+	@echo "  make auth-build       Build auth_service"
+	@echo "  make auth-run         Run auth_service locally in watch mode"
+	@echo "  make auth-check       Validate Prisma, lint, test and build auth_service"
+	@echo "  make user-run         Run user_service locally in watch mode"
+	@echo "  make user-check       Validate Prisma, lint, test and build user_service"
 	@echo "  make check            Check and build all implemented services"
 	@echo "  make proto-generate   Generate Go/NestJS code and the protobuf descriptor"
 	@echo "  make sqlc-generate    Generate database code"
@@ -39,6 +50,8 @@ help:
 	@echo "  make config           Validate development Compose config"
 	@echo "  make logs-vacancy     Follow vacancy_service logs"
 	@echo "  make logs-gateway     Follow gateway_service logs"
+	@echo "  make logs-auth        Follow auth_service logs"
+	@echo "  make logs-user        Follow user_service logs"
 	@echo "  make logs-nginx       Follow Nginx logs"
 	@echo "  make logs-redis       Follow Redis logs"
 	@echo "  make logs-postgres    Follow PostgreSQL logs"
@@ -86,6 +99,12 @@ restart-vacancy:
 restart-gateway:
 	$(COMPOSE) restart gateway_service
 
+restart-auth:
+	$(COMPOSE) restart auth_service
+
+restart-user:
+	$(COMPOSE) restart user_service
+
 restart-nginx:
 	$(COMPOSE) restart nginx
 
@@ -106,6 +125,12 @@ logs-vacancy:
 
 logs-gateway:
 	$(COMPOSE) logs -f gateway_service
+
+logs-auth:
+	$(COMPOSE) logs -f auth_service
+
+logs-user:
+	$(COMPOSE) logs -f user_service
 
 logs-nginx:
 	$(COMPOSE) logs -f nginx
@@ -141,6 +166,12 @@ shell-vacancy:
 
 shell-gateway:
 	$(COMPOSE) exec gateway_service sh
+
+shell-auth:
+	$(COMPOSE) exec auth_service sh
+
+shell-user:
+	$(COMPOSE) exec user_service sh
 
 db-shell:
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
@@ -194,19 +225,92 @@ gateway-format-check:
 
 gateway-check: gateway-format-check gateway-lint gateway-test gateway-build
 
-test: vacancy-test gateway-test
+# auth_service commands run directly on the host (Node.js 22 is required).
+auth-deps:
+	cd $(AUTH_DIR) && npm ci
+
+auth-run:
+	cd $(AUTH_DIR) && npm run start:dev
+
+auth-build:
+	cd $(AUTH_DIR) && npm run build
+
+auth-test:
+	cd $(AUTH_DIR) && npm test -- --runInBand
+
+auth-lint:
+	cd $(AUTH_DIR) && npm run lint
+
+auth-format:
+	cd $(AUTH_DIR) && npm run format
+
+auth-format-check:
+	cd $(AUTH_DIR) && npm run format:check
+
+auth-prisma-generate:
+	cd $(AUTH_DIR) && npm run prisma:generate
+
+auth-prisma-validate:
+	cd $(AUTH_DIR) && npm run prisma:validate
+
+auth-prisma-migrate:
+	cd $(AUTH_DIR) && npm run prisma:migrate:deploy
+
+auth-check: auth-prisma-validate auth-format-check auth-lint auth-test auth-build
+
+# user_service commands run directly on the host (Node.js 22 is required).
+user-deps:
+	cd $(USER_DIR) && npm ci
+
+user-run:
+	cd $(USER_DIR) && npm run start:dev
+
+user-build:
+	cd $(USER_DIR) && npm run build
+
+user-test:
+	cd $(USER_DIR) && npm test -- --runInBand
+
+user-lint:
+	cd $(USER_DIR) && npm run lint
+
+user-format:
+	cd $(USER_DIR) && npm run format
+
+user-format-check:
+	cd $(USER_DIR) && npm run format:check
+
+user-prisma-generate:
+	cd $(USER_DIR) && npm run prisma:generate
+
+user-prisma-validate:
+	cd $(USER_DIR) && npm run prisma:validate
+
+user-prisma-migrate:
+	cd $(USER_DIR) && npm run prisma:migrate:deploy
+
+user-check: user-prisma-validate user-format-check user-lint user-test user-build
+
+test: vacancy-test gateway-test auth-test user-test
 
 vet: vacancy-vet
 
-fmt: vacancy-format gateway-format
+fmt: vacancy-format gateway-format auth-format user-format
 
-check: vacancy-check gateway-check
+check: vacancy-check gateway-check auth-check user-check
 
 proto-tools:
 	$(MAKE) -C $(VACANCY_DIR) proto-tools
 
 proto-generate:
-	$(MAKE) -C $(VACANCY_DIR) proto-generate
+	buf lint
+	buf generate
+	buf build --path contracts/vacancy/v1/vacancy.proto --path contracts/auth/v1/auth.proto --path contracts/user/v1/user.proto -o $(GATEWAY_DIR)/src/generated/contracts.binpb
+	buf build --path contracts/auth/v1/auth.proto --path contracts/user/v1/user.proto -o $(AUTH_DIR)/src/generated/contracts.binpb
+	buf build --path contracts/user/v1/user.proto -o $(USER_DIR)/src/generated/contracts.binpb
+	cd $(GATEWAY_DIR) && ./node_modules/.bin/prettier --write "src/generated/**/*.ts"
+	cd $(AUTH_DIR) && ./node_modules/.bin/prettier --write "src/generated/**/*.ts"
+	cd $(USER_DIR) && ./node_modules/.bin/prettier --write "src/generated/**/*.ts"
 
 sqlc-install:
 	$(MAKE) -C $(VACANCY_DIR) sqlc-install

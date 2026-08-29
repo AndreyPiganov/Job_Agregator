@@ -32,6 +32,25 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer()).post('/api/v1/vacancies/batch').send([{}]).expect(400);
   });
 
+  it('validates auth registration input before gRPC', () => {
+    return request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({ email: 'invalid', password: 'strong-password', first_name: 'Ivan', last_name: 'Petrov' })
+      .expect(400);
+  });
+
+  it('requires a Passport Bearer token for the current principal', () => {
+    return request(app.getHttpServer()).get('/api/v1/auth/me').expect(401);
+  });
+
+  it('protects user profile routes with Passport', () => {
+    return request(app.getHttpServer()).get('/api/v1/users/me/profile').expect(401);
+  });
+
+  it('protects resume routes with Passport', () => {
+    return request(app.getHttpServer()).get('/api/v1/users/me/resumes').expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

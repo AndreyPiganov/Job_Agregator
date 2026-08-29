@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package jobaggregator.auth.v1;
+
+import "buf/validate/validate.proto";
+
+// AuthService owns user authentication and session lifecycle. Authorization
+// decisions for domain resources remain in the services that own them.
+service AuthService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc ValidateAccessToken(ValidateAccessTokenRequest) returns (ValidateAccessTokenResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+message RegisterRequest {
+  option (buf.validate.message).cel = {
+    id: "register.identifier"
+    message: "exactly one of email or phone_number must be provided"
+    expression: "has(this.email) != has(this.phone_number)"
+  };
+
+  optional string email = 1 [(buf.validate.field).string = {
+    email: true
+    max_len: 320
+  }];
+  string password = 2 [(buf.validate.field).string = {
+    min_len: 12
+    max_bytes: 72
+  }];
+  optional string phone_number = 3 [(buf.validate.field).string = {
+    max_len: 20
+    pattern: "^\\+[1-9][0-9]{7,14}$"
+  }];
+  string first_name = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+    pattern: ".*\\S.*"
+  }];
+  string last_name = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+    pattern: ".*\\S.*"
+  }];
+}
+
+message LoginRequest {
+  option (buf.validate.message).cel = {
+    id: "login.identifier"
+    message: "exactly one of email or phone_number must be provided"
+    expression: "has(this.email) != has(this.phone_number)"
+  };
+
+  optional string email = 1 [(buf.validate.field).string = {
+    email: true
+    max_len: 320
+  }];
+  string password = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 72
+  }];
+  optional string phone_number = 3 [(buf.validate.field).string = {
+    max_len: 20
+    pattern: "^\\+[1-9][0-9]{7,14}$"
+  }];
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8192
+  }];
+}
+
+message ValidateAccessTokenRequest {
+  string access_token = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8192
+  }];
+}
+
+message LogoutRequest {
+  string refresh_token = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8192
+  }];
+}
+
+message RegisterResponse {
+  AuthUser user = 1;
+  TokenPair tokens = 2;
+}
+
+message LoginResponse {
+  AuthUser user = 1;
+  TokenPair tokens = 2;
+}
+
+message RefreshTokenResponse {
+  TokenPair tokens = 1;
+}
+
+message AuthUser {
+  string id = 1;
+  optional string email = 2;
+  repeated string roles = 3;
+  optional string phone_number = 4;
+}
+
+message TokenPair {
+  string access_token = 1;
+  string refresh_token = 2;
+  int64 access_token_expires_in_seconds = 3;
+  int64 refresh_token_expires_in_seconds = 4;
+}
+
+message ValidateAccessTokenResponse {
+  string user_id = 1;
+  string session_id = 2;
+  repeated string roles = 3;
+}
+
+message LogoutResponse {
+  bool revoked = 1;
+}

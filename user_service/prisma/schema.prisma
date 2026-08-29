@@ -1,0 +1,519 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["user"]
+}
+
+model User {
+  // The UUID is supplied by auth_service. This table is a local user-domain
+  // anchor and deliberately contains no authentication data.
+  id        String   @id @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  profile           UserProfile?
+  contact           UserContact?
+  resumes           Resume[]
+  savedSearches     SavedVacancySearch[]
+  favoriteVacancies FavoriteVacancy[]
+  hiddenVacancies   HiddenVacancy[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+  @@schema("user")
+}
+
+model UserContact {
+  userId           String   @id @map("user_id") @db.Uuid
+  email            String?  @db.VarChar(320)
+  phoneNumber      String?  @map("phone_number") @db.VarChar(20)
+  telegramUsername String?  @map("telegram_username") @db.VarChar(32)
+  githubUsername   String?  @map("github_username") @db.VarChar(39)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_contacts")
+  @@schema("user")
+}
+
+model UserProfile {
+  userId              String               @id @map("user_id") @db.Uuid
+  firstName           String               @map("first_name") @db.VarChar(100)
+  lastName            String               @map("last_name") @db.VarChar(100)
+  middleName          String?              @map("middle_name") @db.VarChar(100)
+  birthDate           DateTime?            @map("birth_date") @db.Date
+  gender              Gender?
+  city                String?              @db.VarChar(120)
+  photoUrl            String?              @map("photo_url") @db.VarChar(2048)
+  about               String?              @db.Text
+  relocationReadiness RelocationReadiness? @map("relocation_readiness")
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  languages    UserLanguage[]
+  citizenships UserCitizenship[]
+  educations   Education[]
+  experiences  WorkExperience[]
+
+  @@index([city])
+  @@map("user_profiles")
+  @@schema("user")
+}
+
+model UserLanguage {
+  userId       String           @map("user_id") @db.Uuid
+  languageCode String           @map("language_code") @db.VarChar(10)
+  proficiency  ProficiencyLevel
+
+  profile  UserProfile @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  language Language    @relation(fields: [languageCode], references: [code], onDelete: Restrict)
+
+  @@id([userId, languageCode])
+  @@map("user_languages")
+  @@schema("user")
+}
+
+model UserCitizenship {
+  userId      String @map("user_id") @db.Uuid
+  countryCode String @map("country_code") @db.Char(2)
+
+  profile UserProfile @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  country Country     @relation(fields: [countryCode], references: [code], onDelete: Restrict)
+
+  @@id([userId, countryCode])
+  @@map("user_citizenships")
+  @@schema("user")
+}
+
+model Country {
+  code String @id @db.Char(2)
+  name String @unique @db.VarChar(100)
+
+  citizenships UserCitizenship[]
+
+  @@map("countries")
+  @@schema("user")
+}
+
+model Language {
+  code String @id @db.VarChar(10)
+  name String @unique @db.VarChar(100)
+
+  users UserLanguage[]
+
+  @@map("languages")
+  @@schema("user")
+}
+
+model Resume {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String                 @map("user_id") @db.Uuid
+  title                 String                 @db.VarChar(200)
+  about                 String?                @db.Text
+  city                  String?                @db.VarChar(120)
+  status                ResumeStatus           @default(DRAFT)
+  visibility            ResumeVisibility       @default(REGISTERED_EMPLOYERS)
+  searchStatus          SearchStatus           @default(ACTIVE_SEARCH) @map("search_status")
+  businessTripReadiness BusinessTripReadiness? @map("business_trip_readiness")
+  salaryAmount          Int?                   @map("salary_amount")
+  salaryCurrency        String?                @map("salary_currency") @db.Char(3)
+  totalExperienceMonths Int                    @default(0) @map("total_experience_months")
+  employmentTypes       EmploymentType[]       @map("employment_types")
+  workSchedules         WorkSchedule[]         @map("work_schedules")
+  workFormats           WorkFormat[]           @map("work_formats")
+  viewsCount            Int                    @default(0) @map("views_count")
+  impressionsCount      Int                    @default(0) @map("impressions_count")
+  invitationsCount      Int                    @default(0) @map("invitations_count")
+  publishedAt           DateTime?              @map("published_at") @db.Timestamptz(3)
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  educations        ResumeEducation[]
+  workExperiences   ResumeWorkExperience[]
+  certificates      Certificate[]
+  skills            ResumeSkill[]
+  professionalRoles ResumeProfessionalRole[]
+
+  @@index([userId, updatedAt(sort: Desc)])
+  @@index([status, searchStatus])
+  @@index([city])
+  @@index([salaryAmount])
+  @@map("resumes")
+  @@schema("user")
+}
+
+model Education {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String         @map("user_id") @db.Uuid
+  specializationId Int?           @map("specialization_id")
+  institutionName  String         @map("institution_name") @db.VarChar(200)
+  level            EducationLevel
+  faculty          String?        @db.VarChar(200)
+  startedAt        DateTime?      @map("started_at") @db.Date
+  endedAt          DateTime?      @map("ended_at") @db.Date
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  profile        UserProfile              @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  specialization EducationSpecialization? @relation(fields: [specializationId], references: [id], onDelete: Restrict)
+  resumes        ResumeEducation[]
+
+  @@index([userId, endedAt(sort: Desc)])
+  @@index([specializationId])
+  @@map("educations")
+  @@schema("user")
+}
+
+model EducationSpecialization {
+  id       Int     @id @default(autoincrement())
+  name     String  @unique @db.VarChar(200)
+  isActive Boolean @default(true) @map("is_active")
+
+  educations Education[]
+
+  @@map("education_specializations")
+  @@schema("user")
+}
+
+model WorkExperience {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  companyName String    @map("company_name") @db.VarChar(200)
+  position    String    @db.VarChar(200)
+  description String?   @db.Text
+  city        String?   @db.VarChar(120)
+  companyUrl  String?   @map("company_url") @db.VarChar(2048)
+  startedAt   DateTime  @map("started_at") @db.Date
+  endedAt     DateTime? @map("ended_at") @db.Date
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  profile UserProfile            @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  resumes ResumeWorkExperience[]
+
+  @@index([userId, startedAt(sort: Desc)])
+  @@map("work_experiences")
+  @@schema("user")
+}
+
+model ResumeEducation {
+  resumeId    String @map("resume_id") @db.Uuid
+  educationId String @map("education_id") @db.Uuid
+
+  resume    Resume    @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  education Education @relation(fields: [educationId], references: [id], onDelete: Cascade)
+
+  @@id([resumeId, educationId])
+  @@index([educationId])
+  @@map("resume_educations")
+  @@schema("user")
+}
+
+model ResumeWorkExperience {
+  resumeId         String @map("resume_id") @db.Uuid
+  workExperienceId String @map("work_experience_id") @db.Uuid
+
+  resume         Resume         @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  workExperience WorkExperience @relation(fields: [workExperienceId], references: [id], onDelete: Cascade)
+
+  @@id([resumeId, workExperienceId])
+  @@index([workExperienceId])
+  @@map("resume_work_experiences")
+  @@schema("user")
+}
+
+model Certificate {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resumeId   String    @map("resume_id") @db.Uuid
+  title      String    @db.VarChar(200)
+  issuer     String?   @db.VarChar(200)
+  url        String?   @db.VarChar(2048)
+  achievedAt DateTime? @map("achieved_at") @db.Date
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@index([resumeId])
+  @@map("certificates")
+  @@schema("user")
+}
+
+model Skill {
+  id   Int    @id @default(autoincrement())
+  name String @unique @db.VarChar(100)
+
+  resumes ResumeSkill[]
+
+  @@map("skills")
+  @@schema("user")
+}
+
+model ResumeSkill {
+  resumeId String @map("resume_id") @db.Uuid
+  skillId  Int    @map("skill_id")
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  skill  Skill  @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  @@id([resumeId, skillId])
+  @@map("resume_skills")
+  @@schema("user")
+}
+
+model ProfessionalRole {
+  id   Int    @id @default(autoincrement())
+  name String @unique @db.VarChar(150)
+
+  resumes       ResumeProfessionalRole[]
+  savedSearches SavedSearchProfessionalRole[]
+
+  @@map("professional_roles")
+  @@schema("user")
+}
+
+model ResumeProfessionalRole {
+  resumeId           String @map("resume_id") @db.Uuid
+  professionalRoleId Int    @map("professional_role_id")
+
+  resume           Resume           @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  professionalRole ProfessionalRole @relation(fields: [professionalRoleId], references: [id], onDelete: Restrict)
+
+  @@id([resumeId, professionalRoleId])
+  @@map("resume_professional_roles")
+  @@schema("user")
+}
+
+model SavedVacancySearch {
+  id                    String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String                      @map("user_id") @db.Uuid
+  name                  String                      @db.VarChar(150)
+  query                 String?                     @db.VarChar(500)
+  excludedWords         String?                     @map("excluded_words") @db.VarChar(500)
+  searchFields          VacancySearchField[]        @default([TITLE, DESCRIPTION, COMPANY_NAME]) @map("search_fields")
+  cities                String[]
+  companyNames          String[]                    @map("company_names")
+  industryIds           String[]                    @map("industry_ids")
+  minSalary             Int?                        @map("min_salary")
+  maxSalary             Int?                        @map("max_salary")
+  salaryCurrency        String?                     @map("salary_currency") @db.Char(3)
+  experienceLevels      ExperienceLevel[]           @map("experience_levels")
+  employmentTypes       EmploymentType[]            @map("employment_types")
+  workSchedules         WorkSchedule[]              @map("work_schedules")
+  workFormats           WorkFormat[]                @map("work_formats")
+  onlyWithSalary        Boolean                     @default(false) @map("only_with_salary")
+  publicationPeriodDays Int?                        @map("publication_period_days") @db.SmallInt
+  sort                  VacancySearchSort           @default(RELEVANCE)
+  notificationsEnabled  Boolean                     @default(false) @map("notifications_enabled")
+  notificationFrequency SearchNotificationFrequency @default(DAILY) @map("notification_frequency")
+  lastRunAt             DateTime?                   @map("last_run_at") @db.Timestamptz(3)
+  lastNotifiedAt        DateTime?                   @map("last_notified_at") @db.Timestamptz(3)
+  createdAt             DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user              User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  professionalRoles SavedSearchProfessionalRole[]
+
+  @@unique([userId, name])
+  @@index([userId, updatedAt(sort: Desc)])
+  @@index([notificationsEnabled, notificationFrequency])
+  @@map("saved_vacancy_searches")
+  @@schema("user")
+}
+
+model SavedSearchProfessionalRole {
+  savedSearchId      String @map("saved_search_id") @db.Uuid
+  professionalRoleId Int    @map("professional_role_id")
+
+  savedSearch      SavedVacancySearch @relation(fields: [savedSearchId], references: [id], onDelete: Cascade)
+  professionalRole ProfessionalRole   @relation(fields: [professionalRoleId], references: [id], onDelete: Restrict)
+
+  @@id([savedSearchId, professionalRoleId])
+  @@map("saved_search_professional_roles")
+  @@schema("user")
+}
+
+// vacancy_service owns the vacancy record; this service stores only its external id.
+model FavoriteVacancy {
+  userId    String   @map("user_id") @db.Uuid
+  vacancyId BigInt   @map("vacancy_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, vacancyId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("favorite_vacancies")
+  @@schema("user")
+}
+
+// There is deliberately no cross-database foreign key to vacancy_service.
+model HiddenVacancy {
+  userId    String   @map("user_id") @db.Uuid
+  vacancyId BigInt   @map("vacancy_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, vacancyId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("hidden_vacancies")
+  @@schema("user")
+}
+
+enum Gender {
+  MALE
+  FEMALE
+
+  @@map("gender")
+  @@schema("user")
+}
+
+enum ResumeStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("resume_status")
+  @@schema("user")
+}
+
+enum ResumeVisibility {
+  PUBLIC
+  REGISTERED_EMPLOYERS
+  PRIVATE
+
+  @@map("resume_visibility")
+  @@schema("user")
+}
+
+enum SearchStatus {
+  ACTIVE_SEARCH
+  OPEN_TO_OFFERS
+  NOT_SEARCHING
+  FOUND_JOB
+
+  @@map("search_status")
+  @@schema("user")
+}
+
+enum RelocationReadiness {
+  NOT_READY
+  POSSIBLE
+  READY
+
+  @@map("relocation_readiness")
+  @@schema("user")
+}
+
+enum BusinessTripReadiness {
+  NEVER
+  SOMETIMES
+  READY
+
+  @@map("business_trip_readiness")
+  @@schema("user")
+}
+
+enum ProficiencyLevel {
+  BEGINNER_A1
+  ELEMENTARY_A2
+  INTERMEDIATE_B1
+  UPPER_INTERMEDIATE_B2
+  ADVANCED_C1
+  NATIVE_C2
+
+  @@map("proficiency_level")
+  @@schema("user")
+}
+
+enum EducationLevel {
+  SECONDARY
+  SPECIAL_SECONDARY
+  UNFINISHED_HIGHER
+  BACHELOR
+  MASTER
+  HIGHER
+  PHD
+
+  @@map("education_level")
+  @@schema("user")
+}
+
+enum ExperienceLevel {
+  NO_EXPERIENCE
+  ONE_TO_THREE_YEARS
+  THREE_TO_SIX_YEARS
+  MORE_THAN_SIX_YEARS
+
+  @@map("experience_level")
+  @@schema("user")
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  PROJECT
+  INTERNSHIP
+  TEMPORARY
+  VOLUNTEER
+
+  @@map("employment_type")
+  @@schema("user")
+}
+
+enum WorkSchedule {
+  FULL_DAY
+  SHIFT
+  FLEXIBLE
+  ROTATION
+
+  @@map("work_schedule")
+  @@schema("user")
+}
+
+enum WorkFormat {
+  ONSITE
+  REMOTE
+  HYBRID
+  FIELD
+
+  @@map("work_format")
+  @@schema("user")
+}
+
+enum VacancySearchField {
+  TITLE
+  DESCRIPTION
+  COMPANY_NAME
+
+  @@map("vacancy_search_field")
+  @@schema("user")
+}
+
+enum VacancySearchSort {
+  RELEVANCE
+  DATE_DESC
+  DATE_ASC
+  SALARY_DESC
+  SALARY_ASC
+
+  @@map("vacancy_search_sort")
+  @@schema("user")
+}
+
+enum SearchNotificationFrequency {
+  INSTANT
+  DAILY
+  WEEKLY
+
+  @@map("search_notification_frequency")
+  @@schema("user")
+}

@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+logs
+Dockerfile_dev
+Dockerfile_prod
+.dockerignore
+.env

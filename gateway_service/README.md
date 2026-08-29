@@ -1,7 +1,8 @@
 # Gateway Service
 
-HTTP gateway для Job Aggregator на NestJS 11. Gateway принимает
-публичные HTTP-запросы и вызывает `vacancy_service` по gRPC.
+HTTP gateway для Job Aggregator на NestJS 11. Gateway принимает публичные
+HTTP-запросы и вызывает `auth_service`, `user_service` и `vacancy_service` по
+gRPC.
 
 - проверка переменных окружения при старте;
 - глобальная HTTP-валидация;
@@ -10,9 +11,12 @@ HTTP gateway для Job Aggregator на NestJS 11. Gateway принимает
 - unit- и e2e-тесты;
 - health check `GET /health`;
 - типизированный gRPC-клиент Vacancy с deadline для каждого вызова;
+- типизированные gRPC-клиенты Auth, User Profile и Resume;
+- login по единому полю `identifier` (email либо E.164 phone) и password;
+- Passport JWT guard с локальной проверкой access token;
 - перевод gRPC-кодов ошибок в HTTP-статусы;
 - Redis-кэш чтения через официальный Nest `CacheModule`;
-- fail-open работа кэша: сбой Redis не блокирует обращения к `vacancy_service`.
+- fail-open работа кэша: сбой Redis не блокирует обращения к внутренним сервисам.
 
 ## Требования для локального запуска
 
@@ -91,10 +95,61 @@ JSON/query-данных. Ограничения предметной облас�
 `vacancy_service`. Поэтому те же правила защищают сервис и при вызове не через
 Gateway, например из другого gRPC-сервиса.
 
+## Auth HTTP API
+
+| Метод  | Маршрут                 | Passport / gRPC                          |
+| ------ | ----------------------- | ---------------------------------------- |
+| `POST` | `/api/v1/auth/register` | `AuthService.Register`                   |
+| `POST` | `/api/v1/auth/login`    | DTO validation → `Login`                 |
+| `POST` | `/api/v1/auth/refresh`  | `AuthService.RefreshToken`               |
+| `POST` | `/api/v1/auth/logout`   | `AuthService.Logout`                     |
+| `GET`  | `/api/v1/auth/me`       | Passport JWT, локальная проверка `RS256` |
+
+`POST /api/v1/auth/register` принимает `password`, обязательные `first_name` и
+`last_name`, а также ровно одно поле: `email` либо `phone_number` в формате
+E.164. `POST /api/v1/auth/login` принимает `identifier` и `password`; DTO
+проверяется глобальным `ValidationPipe`, после чего Gateway auth client выбирает
+protobuf-поле `email` или `phone_number`.
+
+JWT strategy извлекает access token из `Authorization: Bearer`, локально
+проверяет `RS256`-подпись публичным ключом, срок действия, issuer, audience и
+форму claims. Поэтому обычный защищённый запрос не зависит от доступности Auth.
+Gateway не может выпускать токены: закрытый ключ находится только в
+`auth_service`.
+
+Logout немедленно отзывает refresh-сессию, но уже выданный access JWT работает
+до истечения TTL (по умолчанию 10 минут). Внутренний Auth RPC
+`ValidateAccessToken` сохранён для будущих чувствительных операций, где нужны
+актуальные роли, блокировка и состояние сессии.
+
+## User HTTP API
+
+Все маршруты ниже требуют `Authorization: Bearer <access_token>`. `user_id`
+берётся только из principal, созданного JWT strategy из подписанных claims, и
+не принимается из HTTP body или URL.
+
+| Метод    | Маршрут                                               | gRPC-метод             |
+| -------- | ----------------------------------------------------- | ---------------------- |
+| `GET`    | `/api/v1/users/me/profile`                            | `GetUserProfile`       |
+| `PUT`    | `/api/v1/users/me/profile`                            | `UpsertUserProfile`    |
+| `POST`   | `/api/v1/users/me/educations`                         | `CreateEducation`      |
+| `PUT`    | `/api/v1/users/me/educations/:educationId`            | `UpdateEducation`      |
+| `DELETE` | `/api/v1/users/me/educations/:educationId`            | `DeleteEducation`      |
+| `POST`   | `/api/v1/users/me/work-experiences`                   | `CreateWorkExperience` |
+| `PUT`    | `/api/v1/users/me/work-experiences/:workExperienceId` | `UpdateWorkExperience` |
+| `DELETE` | `/api/v1/users/me/work-experiences/:workExperienceId` | `DeleteWorkExperience` |
+| `POST`   | `/api/v1/users/me/resumes`                            | `CreateResume`         |
+| `GET`    | `/api/v1/users/me/resumes`                            | `ListResumes`          |
+| `GET`    | `/api/v1/users/me/resumes/:resumeId`                  | `GetResume`            |
+| `PUT`    | `/api/v1/users/me/resumes/:resumeId`                  | `UpdateResume`         |
+| `PATCH`  | `/api/v1/users/me/resumes/:resumeId/status`           | `SetResumeStatus`      |
+| `DELETE` | `/api/v1/users/me/resumes/:resumeId`                  | `DeleteResume`         |
+
 ## Protobuf-контракт
 
 Gateway генерирует из общего контракта TypeScript-типы и интерфейс
-gRPC-клиента командой `npm run proto:generate`. Режим `nestJs=true`
+gRPC-клиента командой `npm run proto:generate`. Команда использует единый
+корневой `buf.gen.yaml` и обновляет protobuf-код всех сервисов. Режим `nestJs=true`
 не создаёт отдельный runtime-клиент или кодеки. Опция `snakeToCamel=false`
 сохраняет protobuf-имена в сгенерированных TypeScript-интерфейсах. Эта же
 команда собирает `src/generated/contracts.binpb` со всеми импортами, включая
@@ -125,37 +180,46 @@ make gateway-check
 
 ## Переменные окружения
 
-| Переменная                | По умолчанию      | Назначение                                  |
-| ------------------------- | ----------------- | ------------------------------------------- |
-| `NODE_ENV`                | `development`     | `development`, `test` или `production`      |
-| `PORT`                    | `3000`            | HTTP-порт приложения                        |
-| `LOG_LEVEL`               | `info`            | Минимальный уровень логирования             |
-| `LOG_DIR`                 | `logs`            | Каталог файловых логов                      |
-| `VACANCY_GRPC_URL`        | `localhost:50051` | Адрес gRPC-сервера Vacancy                  |
-| `VACANCY_GRPC_TIMEOUT_MS` | `3000`            | Deadline одного gRPC-вызова в миллисекундах |
-| `REDIS_HOST`              | `localhost`       | Хост Redis                                  |
-| `REDIS_PORT`              | `6379`            | Порт Redis                                  |
-| `REDIS_PASSWORD`          | `change-me`       | Пароль Redis                                |
-| `REDIS_DB`                | `0`               | Номер логической Redis DB                   |
-| `REDIS_CONNECT_TIMEOUT_MS` | `500`            | Таймаут подключения к Redis                 |
-| `CACHE_TTL_MS`            | `15000`           | TTL записей кэша в миллисекундах            |
-| `CACHE_NAMESPACE`         | `job-aggregator:gateway` | Namespace ключей кэша                |
-| `CACHE_FAILURE_COOLDOWN_MS` | `5000`          | Пауза перед повторной попыткой Redis         |
+| Переменная                     | По умолчанию              | Назначение                                  |
+| ------------------------------ | ------------------------- | ------------------------------------------- |
+| `NODE_ENV`                     | `development`             | `development`, `test` или `production`      |
+| `PORT`                         | `3000`                    | HTTP-порт приложения                        |
+| `LOG_LEVEL`                    | `info`                    | Минимальный уровень логирования             |
+| `LOG_DIR`                      | `logs`                    | Каталог файловых логов                      |
+| `VACANCY_GRPC_URL`             | `localhost:50051`         | Адрес gRPC-сервера Vacancy                  |
+| `VACANCY_GRPC_TIMEOUT_MS`      | `3000`                    | Deadline одного gRPC-вызова в миллисекундах |
+| `AUTH_GRPC_URL`                | `localhost:5005`          | Адрес gRPC-сервера Auth                     |
+| `AUTH_GRPC_TIMEOUT_MS`         | `3000`                    | Deadline Auth gRPC-вызова                   |
+| `JWT_ACCESS_PUBLIC_KEY_BASE64` | встроенный dev-ключ       | base64 SPKI RSA public key access JWT       |
+| `JWT_ISSUER`                   | `job-aggregator-auth`     | Ожидаемый issuer access JWT                 |
+| `JWT_AUDIENCE`                 | `job-aggregator-services` | Ожидаемая audience access JWT               |
+| `USER_GRPC_URL`                | `localhost:5000`          | Адрес gRPC-сервера User                     |
+| `USER_GRPC_TIMEOUT_MS`         | `3000`                    | Deadline User gRPC-вызова                   |
+| `REDIS_HOST`                   | `localhost`               | Хост Redis                                  |
+| `REDIS_PORT`                   | `6379`                    | Порт Redis                                  |
+| `REDIS_PASSWORD`               | `change-me`               | Пароль Redis                                |
+| `REDIS_DB`                     | `0`                       | Номер логической Redis DB                   |
+| `REDIS_CONNECT_TIMEOUT_MS`     | `500`                     | Таймаут подключения к Redis                 |
+| `CACHE_TTL_MS`                 | `15000`                   | TTL записей кэша в миллисекундах            |
+| `CACHE_NAMESPACE`              | `job-aggregator:gateway`  | Namespace ключей кэша                       |
+| `CACHE_FAILURE_COOLDOWN_MS`    | `5000`                    | Пауза перед повторной попыткой Redis        |
 
-Gateway не подключается напрямую к базе данных `vacancy_service`.
+Gateway не подключается напрямую к базам данных внутренних сервисов.
 
 ## Redis-кэш
 
-Gateway кэширует успешные ответы `GetVacancy` и `ListVacancies`. Порядок
-городов и полей поиска нормализуется, поэтому эквивалентные фильтры используют
-один ключ. После успешного `CreateVacancy` или `BatchCreateVacancies` namespace
-кэша очищается. По умолчанию TTL равен 15 секундам: это ограничивает устаревание
-данных, если запись произошла напрямую через другой gRPC-клиент.
+Gateway кэширует успешные ответы чтения вакансий, профиля текущего пользователя
+и его резюме. Ключи пользовательских данных содержат `user_id`; после изменения
+профиля или резюме связанные ключи обновляются либо удаляются. Порядок городов и
+полей поиска вакансий нормализуется, поэтому эквивалентные фильтры используют
+один ключ. Создание вакансий меняет версию ключей списков, не затрагивая кэши
+других модулей. По умолчанию TTL равен 15 секундам.
 
 Redis является ускорителем, а не источником истины. Ошибка чтения, записи или
-очистки логируется как `warn`, после чего Gateway продолжает работать через
-gRPC. Redis не нужен в `vacancy_service` на текущем этапе: сервис и PostgreSQL
-остаются владельцами данных, а кэш обслуживает именно публичные GET-запросы.
+удаления логируется как `warn`, после чего Gateway продолжает работать через
+gRPC. Внутренние сервисы и PostgreSQL остаются владельцами данных; Redis служит
+только ускорителем чтения в Gateway. JWT-проверка не использует этот кэш:
+подпись и срок действия access-токена проверяются локально процессом Gateway.
 
 ## Docker
 

@@ -46,11 +46,13 @@ export class AppCacheService {
     }
   }
 
-  async clear(): Promise<void> {
+  async delete(...keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+
     try {
-      await this.cache.clear();
+      await this.cache.mdel(keys);
     } catch (error) {
-      this.markUnavailable('clear', undefined, error);
+      this.markUnavailable('delete', keys.join(','), error);
     }
   }
 
@@ -58,7 +60,7 @@ export class AppCacheService {
     return Date.now() < this.unavailableUntil;
   }
 
-  private markUnavailable(operation: 'read' | 'write' | 'clear', key: string | undefined, error: unknown): void {
+  private markUnavailable(operation: 'read' | 'write' | 'delete', key: string | undefined, error: unknown): void {
     this.unavailableUntil = Date.now() + this.failureCooldownMs;
     this.logger.warn({
       message: 'cache operation failed',

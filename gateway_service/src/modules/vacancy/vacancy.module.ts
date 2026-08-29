@@ -1,22 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ClientsModule, GrpcOptions, Transport } from '@nestjs/microservices';
-import { loadFileDescriptorSetFromBuffer } from '@grpc/proto-loader';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { RedisCacheModule } from '../../common/cache/redis-cache.module';
+import { grpcPackageDefinition } from '../../common/grpc/contracts';
 import { JOBAGGREGATOR_VACANCY_V1_PACKAGE_NAME } from '../../generated/vacancy/v1/vacancy';
 import { VacancyController } from './vacancy.controller';
+import { VacancyMapper } from './vacancy.mapper';
 import { VacancyService } from './vacancy.service';
-
-const packageDefinition = loadFileDescriptorSetFromBuffer(
-  readFileSync(join(__dirname, '../../generated/contracts.binpb')),
-  {
-    arrays: true,
-    defaults: true,
-    longs: String,
-  },
-);
 
 @Module({
   imports: [
@@ -30,7 +20,7 @@ const packageDefinition = loadFileDescriptorSetFromBuffer(
           transport: Transport.GRPC,
           options: {
             package: JOBAGGREGATOR_VACANCY_V1_PACKAGE_NAME,
-            packageDefinition,
+            packageDefinition: grpcPackageDefinition,
             url: config.get<string>('grpc.vacancy.url', 'localhost:50051'),
           },
         }),
@@ -38,6 +28,6 @@ const packageDefinition = loadFileDescriptorSetFromBuffer(
     ]),
   ],
   controllers: [VacancyController],
-  providers: [VacancyService],
+  providers: [VacancyService, VacancyMapper],
 })
 export class VacancyModule {}

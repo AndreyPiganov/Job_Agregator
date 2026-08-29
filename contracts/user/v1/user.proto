@@ -1,0 +1,597 @@
+syntax = "proto3";
+
+package jobaggregator.user.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// UserService creates the complete minimal user after auth_service creates an
+// identity. CreateUser is idempotent for safe registration retries.
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+}
+
+// UserProfileService owns the applicant's shared personal data. Education and
+// work experience live here and can be attached to several resumes.
+service UserProfileService {
+  rpc GetUserProfile(GetUserProfileRequest) returns (GetUserProfileResponse);
+  rpc UpsertUserProfile(UpsertUserProfileRequest) returns (UpsertUserProfileResponse);
+  rpc CreateEducation(CreateEducationRequest) returns (CreateEducationResponse);
+  rpc UpdateEducation(UpdateEducationRequest) returns (UpdateEducationResponse);
+  rpc DeleteEducation(DeleteEducationRequest) returns (DeleteEducationResponse);
+  rpc CreateWorkExperience(CreateWorkExperienceRequest) returns (CreateWorkExperienceResponse);
+  rpc UpdateWorkExperience(UpdateWorkExperienceRequest) returns (UpdateWorkExperienceResponse);
+  rpc DeleteWorkExperience(DeleteWorkExperienceRequest) returns (DeleteWorkExperienceResponse);
+}
+
+// ResumeService owns resume drafts and their publication lifecycle.
+service ResumeService {
+  rpc CreateResume(CreateResumeRequest) returns (CreateResumeResponse);
+  rpc GetResume(GetResumeRequest) returns (GetResumeResponse);
+  rpc ListResumes(ListResumesRequest) returns (ListResumesResponse);
+  rpc UpdateResume(UpdateResumeRequest) returns (UpdateResumeResponse);
+  rpc SetResumeStatus(SetResumeStatusRequest) returns (SetResumeStatusResponse);
+  rpc DeleteResume(DeleteResumeRequest) returns (DeleteResumeResponse);
+}
+
+message CreateUserRequest {
+  option (buf.validate.message).cel = {
+    id: "create_user.contact"
+    message: "exactly one of email or phone_number must be provided"
+    expression: "has(this.email) != has(this.phone_number)"
+  };
+
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string first_name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+    pattern: ".*\\S.*"
+  }];
+  string last_name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+    pattern: ".*\\S.*"
+  }];
+  optional string email = 4 [(buf.validate.field).string = {
+    email: true
+    max_len: 320
+  }];
+  optional string phone_number = 5 [(buf.validate.field).string = {
+    max_len: 20
+    pattern: "^\\+[1-9][0-9]{7,14}$"
+  }];
+}
+
+message CreateUserResponse {
+  bool created = 1;
+}
+
+message GetUserProfileRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message GetUserProfileResponse {
+  UserProfile profile = 1;
+}
+
+message UpsertUserProfileResponse {
+  UserProfile profile = 1;
+}
+
+// Languages, citizenships and contacts are full replacements, not patches.
+message UpsertUserProfileRequest {
+  option (buf.validate.message).cel = {
+    id: "user_profile.languages_unique"
+    message: "languages must not contain duplicate codes"
+    expression: "this.languages.all(language, this.languages.filter(other, other.code.lowerAscii() == language.code.lowerAscii()).size() == 1)"
+  };
+
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string first_name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+    pattern: ".*\\S.*"
+  }];
+  string last_name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+    pattern: ".*\\S.*"
+  }];
+  optional string middle_name = 4 [(buf.validate.field).string.max_len = 100];
+  optional string birth_date = 5 [(buf.validate.field).string.pattern = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"];
+  optional Gender gender = 6 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  optional string city = 7 [(buf.validate.field).string.max_len = 120];
+  optional string photo_url = 8 [(buf.validate.field).string = {
+    uri: true
+    max_len: 2048
+  }];
+  optional string about = 9 [(buf.validate.field).string.max_len = 10000];
+  optional RelocationReadiness relocation_readiness = 10 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  repeated LanguageInput languages = 11 [(buf.validate.field).repeated = {
+    max_items: 20
+  }];
+  repeated string citizenship_codes = 12 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {
+        len: 2
+        pattern: "^[A-Z]{2}$"
+      }
+    }
+  }];
+  optional UserContactInput contacts = 13;
+}
+
+message UserContactInput {
+  optional string email = 1 [(buf.validate.field).string = {
+    email: true
+    max_len: 320
+  }];
+  optional string phone_number = 2 [(buf.validate.field).string = {
+    max_len: 20
+    pattern: "^\\+[1-9][0-9]{7,14}$"
+  }];
+  optional string telegram_username = 3 [(buf.validate.field).string = {
+    min_len: 5
+    max_len: 32
+    pattern: "^[A-Za-z][A-Za-z0-9_]*$"
+  }];
+  optional string github_username = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 39
+    pattern: "^[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9]$|^[A-Za-z0-9]$"
+  }];
+}
+
+message LanguageInput {
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 2
+    max_len: 10
+  }];
+  ProficiencyLevel proficiency = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+}
+
+message UserProfile {
+  string user_id = 1;
+  string first_name = 2;
+  string last_name = 3;
+  optional string middle_name = 4;
+  optional string birth_date = 5;
+  optional Gender gender = 6;
+  optional string city = 7;
+  optional string photo_url = 8;
+  optional string about = 9;
+  optional RelocationReadiness relocation_readiness = 10;
+  repeated LanguageProficiency languages = 11;
+  repeated Citizenship citizenships = 12;
+  repeated Education educations = 13;
+  repeated WorkExperience work_experiences = 14;
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp updated_at = 16;
+  optional UserContact contacts = 17;
+}
+
+message UserContact {
+  optional string email = 1;
+  optional string phone_number = 2;
+  optional string telegram_username = 3;
+  optional string github_username = 4;
+}
+
+message LanguageProficiency {
+  string code = 1;
+  string name = 2;
+  ProficiencyLevel proficiency = 3;
+}
+
+message Citizenship {
+  string country_code = 1;
+  string country_name = 2;
+}
+
+message EducationInput {
+  string institution_name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+  EducationLevel level = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  optional int32 specialization_id = 3 [(buf.validate.field).int32.gt = 0];
+  optional string faculty = 4 [(buf.validate.field).string.max_len = 200];
+  optional string started_at = 5 [(buf.validate.field).string.pattern = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"];
+  optional string ended_at = 6 [(buf.validate.field).string.pattern = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"];
+}
+
+message CreateEducationRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  EducationInput education = 2 [(buf.validate.field).required = true];
+}
+
+message UpdateEducationRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string education_id = 2 [(buf.validate.field).string.uuid = true];
+  EducationInput education = 3 [(buf.validate.field).required = true];
+}
+
+message DeleteEducationRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string education_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message CreateEducationResponse {
+  Education education = 1;
+}
+
+message UpdateEducationResponse {
+  Education education = 1;
+}
+
+message DeleteEducationResponse {
+  bool deleted = 1;
+}
+
+message Education {
+  string id = 1;
+  string institution_name = 2;
+  EducationLevel level = 3;
+  optional EducationSpecialization specialization = 4;
+  optional string faculty = 5;
+  optional string started_at = 6;
+  optional string ended_at = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message EducationSpecialization {
+  int32 id = 1;
+  string name = 2;
+}
+
+message WorkExperienceInput {
+  string company_name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+  string position = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+  optional string description = 3 [(buf.validate.field).string.max_len = 10000];
+  optional string city = 4 [(buf.validate.field).string.max_len = 120];
+  optional string company_url = 5 [(buf.validate.field).string = {
+    uri: true
+    max_len: 2048
+  }];
+  string started_at = 6 [(buf.validate.field).string.pattern = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"];
+  optional string ended_at = 7 [(buf.validate.field).string.pattern = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"];
+}
+
+message CreateWorkExperienceRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  WorkExperienceInput work_experience = 2 [(buf.validate.field).required = true];
+}
+
+message UpdateWorkExperienceRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string work_experience_id = 2 [(buf.validate.field).string.uuid = true];
+  WorkExperienceInput work_experience = 3 [(buf.validate.field).required = true];
+}
+
+message DeleteWorkExperienceRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string work_experience_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message CreateWorkExperienceResponse {
+  WorkExperience work_experience = 1;
+}
+
+message UpdateWorkExperienceResponse {
+  WorkExperience work_experience = 1;
+}
+
+message DeleteWorkExperienceResponse {
+  bool deleted = 1;
+}
+
+message WorkExperience {
+  string id = 1;
+  string company_name = 2;
+  string position = 3;
+  optional string description = 4;
+  optional string city = 5;
+  optional string company_url = 6;
+  string started_at = 7;
+  optional string ended_at = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message ResumeDraft {
+  option (buf.validate.message).cel = {
+    id: "resume.salary_pair"
+    message: "salary_amount and salary_currency must be specified together"
+    expression: "has(this.salary_amount) == has(this.salary_currency)"
+  };
+
+  string title = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+  optional string about = 2 [(buf.validate.field).string.max_len = 10000];
+  optional string city = 3 [(buf.validate.field).string.max_len = 120];
+  optional ResumeVisibility visibility = 4 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  optional SearchStatus search_status = 5 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  optional BusinessTripReadiness business_trip_readiness = 6 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+  optional int32 salary_amount = 7 [(buf.validate.field).int32.gt = 0];
+  optional string salary_currency = 8 [(buf.validate.field).string = {
+    len: 3
+    pattern: "^[A-Z]{3}$"
+  }];
+  repeated EmploymentType employment_types = 9 [(buf.validate.field).repeated = {
+    max_items: 6
+    unique: true
+  }];
+  repeated WorkSchedule work_schedules = 10 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+  }];
+  repeated WorkFormat work_formats = 11 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+  }];
+  repeated string education_ids = 12 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {string: {uuid: true}}
+  }];
+  repeated string work_experience_ids = 13 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {string: {uuid: true}}
+  }];
+  repeated int32 skill_ids = 14 [(buf.validate.field).repeated = {
+    max_items: 100
+    unique: true
+    items: {int32: {gt: 0}}
+  }];
+  repeated int32 professional_role_ids = 15 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {int32: {gt: 0}}
+  }];
+  repeated CertificateInput certificates = 16 [(buf.validate.field).repeated.max_items = 50];
+}
+
+message CertificateInput {
+  string title = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+  optional string issuer = 2 [(buf.validate.field).string.max_len = 200];
+  optional string url = 3 [(buf.validate.field).string = {
+    uri: true
+    max_len: 2048
+  }];
+  optional string achieved_at = 4 [(buf.validate.field).string.pattern = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"];
+}
+
+message CreateResumeRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  ResumeDraft resume = 2 [(buf.validate.field).required = true];
+}
+
+message GetResumeRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string resume_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message ListResumesRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message UpdateResumeRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string resume_id = 2 [(buf.validate.field).string.uuid = true];
+  ResumeDraft resume = 3 [(buf.validate.field).required = true];
+}
+
+message SetResumeStatusRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string resume_id = 2 [(buf.validate.field).string.uuid = true];
+  ResumeStatus status = 3 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: 0
+  }];
+}
+
+message DeleteResumeRequest {
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+  string resume_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message CreateResumeResponse {
+  Resume resume = 1;
+}
+
+message GetResumeResponse {
+  Resume resume = 1;
+}
+
+message UpdateResumeResponse {
+  Resume resume = 1;
+}
+
+message SetResumeStatusResponse {
+  Resume resume = 1;
+}
+
+message ListResumesResponse {
+  repeated Resume resumes = 1;
+}
+
+message Resume {
+  string id = 1;
+  string user_id = 2;
+  string title = 3;
+  optional string about = 4;
+  optional string city = 5;
+  ResumeStatus status = 6;
+  ResumeVisibility visibility = 7;
+  SearchStatus search_status = 8;
+  optional BusinessTripReadiness business_trip_readiness = 9;
+  optional int32 salary_amount = 10;
+  optional string salary_currency = 11;
+  int32 total_experience_months = 12;
+  repeated EmploymentType employment_types = 13;
+  repeated WorkSchedule work_schedules = 14;
+  repeated WorkFormat work_formats = 15;
+  int32 views_count = 16;
+  int32 impressions_count = 17;
+  int32 invitations_count = 18;
+  repeated Education educations = 19;
+  repeated WorkExperience work_experiences = 20;
+  repeated Certificate certificates = 21;
+  repeated Skill skills = 22;
+  repeated ProfessionalRole professional_roles = 23;
+  optional google.protobuf.Timestamp published_at = 24;
+  google.protobuf.Timestamp created_at = 25;
+  google.protobuf.Timestamp updated_at = 26;
+}
+
+message Certificate {
+  string id = 1;
+  string title = 2;
+  optional string issuer = 3;
+  optional string url = 4;
+  optional string achieved_at = 5;
+}
+
+message Skill {
+  int32 id = 1;
+  string name = 2;
+}
+
+message ProfessionalRole {
+  int32 id = 1;
+  string name = 2;
+}
+
+message DeleteResumeResponse {
+  bool deleted = 1;
+}
+
+enum Gender {
+  GENDER_UNSPECIFIED = 0;
+  GENDER_MALE = 1;
+  GENDER_FEMALE = 2;
+}
+
+enum RelocationReadiness {
+  RELOCATION_READINESS_UNSPECIFIED = 0;
+  RELOCATION_READINESS_NOT_READY = 1;
+  RELOCATION_READINESS_POSSIBLE = 2;
+  RELOCATION_READINESS_READY = 3;
+}
+
+enum ProficiencyLevel {
+  PROFICIENCY_LEVEL_UNSPECIFIED = 0;
+  PROFICIENCY_LEVEL_BEGINNER_A1 = 1;
+  PROFICIENCY_LEVEL_ELEMENTARY_A2 = 2;
+  PROFICIENCY_LEVEL_INTERMEDIATE_B1 = 3;
+  PROFICIENCY_LEVEL_UPPER_INTERMEDIATE_B2 = 4;
+  PROFICIENCY_LEVEL_ADVANCED_C1 = 5;
+  PROFICIENCY_LEVEL_NATIVE_C2 = 6;
+}
+
+enum EducationLevel {
+  EDUCATION_LEVEL_UNSPECIFIED = 0;
+  EDUCATION_LEVEL_SECONDARY = 1;
+  EDUCATION_LEVEL_SPECIAL_SECONDARY = 2;
+  EDUCATION_LEVEL_UNFINISHED_HIGHER = 3;
+  EDUCATION_LEVEL_BACHELOR = 4;
+  EDUCATION_LEVEL_MASTER = 5;
+  EDUCATION_LEVEL_HIGHER = 6;
+  EDUCATION_LEVEL_PHD = 7;
+}
+
+enum ResumeStatus {
+  RESUME_STATUS_UNSPECIFIED = 0;
+  RESUME_STATUS_DRAFT = 1;
+  RESUME_STATUS_PUBLISHED = 2;
+  RESUME_STATUS_ARCHIVED = 3;
+}
+
+enum ResumeVisibility {
+  RESUME_VISIBILITY_UNSPECIFIED = 0;
+  RESUME_VISIBILITY_PUBLIC = 1;
+  RESUME_VISIBILITY_REGISTERED_EMPLOYERS = 2;
+  RESUME_VISIBILITY_PRIVATE = 3;
+}
+
+enum SearchStatus {
+  SEARCH_STATUS_UNSPECIFIED = 0;
+  SEARCH_STATUS_ACTIVE_SEARCH = 1;
+  SEARCH_STATUS_OPEN_TO_OFFERS = 2;
+  SEARCH_STATUS_NOT_SEARCHING = 3;
+  SEARCH_STATUS_FOUND_JOB = 4;
+}
+
+enum BusinessTripReadiness {
+  BUSINESS_TRIP_READINESS_UNSPECIFIED = 0;
+  BUSINESS_TRIP_READINESS_NEVER = 1;
+  BUSINESS_TRIP_READINESS_SOMETIMES = 2;
+  BUSINESS_TRIP_READINESS_READY = 3;
+}
+
+enum EmploymentType {
+  EMPLOYMENT_TYPE_UNSPECIFIED = 0;
+  EMPLOYMENT_TYPE_FULL_TIME = 1;
+  EMPLOYMENT_TYPE_PART_TIME = 2;
+  EMPLOYMENT_TYPE_PROJECT = 3;
+  EMPLOYMENT_TYPE_INTERNSHIP = 4;
+  EMPLOYMENT_TYPE_TEMPORARY = 5;
+  EMPLOYMENT_TYPE_VOLUNTEER = 6;
+}
+
+enum WorkSchedule {
+  WORK_SCHEDULE_UNSPECIFIED = 0;
+  WORK_SCHEDULE_FULL_DAY = 1;
+  WORK_SCHEDULE_SHIFT = 2;
+  WORK_SCHEDULE_FLEXIBLE = 3;
+  WORK_SCHEDULE_ROTATION = 4;
+}
+
+enum WorkFormat {
+  WORK_FORMAT_UNSPECIFIED = 0;
+  WORK_FORMAT_ONSITE = 1;
+  WORK_FORMAT_REMOTE = 2;
+  WORK_FORMAT_HYBRID = 3;
+  WORK_FORMAT_FIELD = 4;
+}

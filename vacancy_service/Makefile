@@ -27,8 +27,7 @@ proto-tools:
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
 
 proto-generate:
-	cd .. && buf lint && buf generate
-	cd .. && buf build -o gateway_service/src/generated/contracts.binpb
+	$(MAKE) -C .. proto-generate
 
 sqlc-install:
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)

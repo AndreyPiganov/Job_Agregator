@@ -1,0 +1,105 @@
+{
+  "info": {
+    "_postman_id": "ce0faf2e-e8d7-4a73-aa69-1ea6f5455cd2",
+    "name": "Job Aggregator API - Read-only Performance",
+    "description": "Read-only requests for Postman Performance Runner. Public reads work immediately. For authenticated reads, paste a fresh access token into the collection variable. Do not add registration or write requests to a load scenario.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+          "pm.test('Response is JSON', function () {",
+          "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Public read-only",
+      "auth": { "type": "noauth" },
+      "item": [
+        {
+          "name": "Health",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/health" }
+        },
+        {
+          "name": "List vacancies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/vacancies?page=1&items_per_page=25"
+          }
+        },
+        {
+          "name": "Filter vacancies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/vacancies/filter?q=Backend&search_field=title&sort=date_desc&page=1&items_per_page=25"
+          }
+        },
+        {
+          "name": "Get vacancy by ID",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.collectionVariables.get('vacancy_id')) pm.execution.skipRequest();"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/vacancies/{{vacancy_id}}",
+            "description": "Set vacancy_id to an existing positive numeric ID before running this request."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authenticated read-only",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "if (!pm.collectionVariables.get('access_token')) pm.execution.skipRequest();"
+            ]
+          }
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+      },
+      "item": [
+        {
+          "name": "Current principal - local JWT",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/api/v1/auth/me" }
+        },
+        {
+          "name": "Cached profile",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/api/v1/users/me/profile" }
+        },
+        {
+          "name": "Cached resume list",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/api/v1/users/me/resumes" }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:3000", "type": "string" },
+    { "key": "vacancy_id", "value": "", "type": "string" },
+    { "key": "access_token", "value": "", "type": "string" }
+  ]
+}

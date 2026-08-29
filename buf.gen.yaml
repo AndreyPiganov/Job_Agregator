@@ -3,20 +3,28 @@ version: v2
 plugins:
   - local: protoc-gen-go
     out: vacancy_service
+    types:
+      - jobaggregator.vacancy.v1.VacancyService
     opt:
       - module=vacancy_service
 
   - local: protoc-gen-go-grpc
     out: vacancy_service
+    types:
+      - jobaggregator.vacancy.v1.VacancyService
     opt:
       - module=vacancy_service
 
   - local: gateway_service/node_modules/.bin/protoc-gen-ts_proto
     out: gateway_service/src/generated
     strategy: all
+    types:
+      - jobaggregator.vacancy.v1.VacancyService
+      - jobaggregator.auth.v1.AuthService
+      - jobaggregator.user.v1.UserProfileService
+      - jobaggregator.user.v1.ResumeService
     opt:
       - nestJs=true
-      - returnObservable=true
       - forceLong=string
       - useDate=false
       - useOptionals=messages
@@ -24,3 +32,58 @@ plugins:
       - esModuleInterop=true
       - snakeToCamel=false
       - Mgoogle/protobuf/timestamp.proto=../../../common/proto/timestamp
+
+  - local: auth_service/node_modules/.bin/protoc-gen-ts_proto
+    out: auth_service/src/generated
+    strategy: all
+    types:
+      - jobaggregator.auth.v1.AuthService
+      - jobaggregator.user.v1.UserService
+    opt:
+      - nestJs=true
+      - forceLong=string
+      - useDate=false
+      - useOptionals=messages
+      - emitImportedFiles=false
+      - esModuleInterop=true
+      - snakeToCamel=false
+      - Mgoogle/protobuf/timestamp.proto=../../../common/proto/timestamp
+
+  - local: user_service/node_modules/.bin/protoc-gen-ts_proto
+    out: user_service/src/generated
+    strategy: all
+    types:
+      - jobaggregator.user.v1.UserService
+      - jobaggregator.user.v1.UserProfileService
+      - jobaggregator.user.v1.ResumeService
+    opt:
+      - nestJs=true
+      - forceLong=string
+      - useDate=false
+      - useOptionals=messages
+      - emitImportedFiles=false
+      - esModuleInterop=true
+      - snakeToCamel=false
+      - Mgoogle/protobuf/timestamp.proto=../../../common/proto/timestamp
+
+  # Protobuf-ES descriptors are generated alongside ts-proto solely for
+  # executing buf.validate rules at the NestJS gRPC boundary.
+  - local: auth_service/node_modules/.bin/protoc-gen-es
+    out: auth_service/src/generated/protovalidate
+    strategy: all
+    include_imports: true
+    types:
+      - jobaggregator.auth.v1.AuthService
+    opt:
+      - target=ts
+
+  - local: user_service/node_modules/.bin/protoc-gen-es
+    out: user_service/src/generated/protovalidate
+    strategy: all
+    include_imports: true
+    types:
+      - jobaggregator.user.v1.UserService
+      - jobaggregator.user.v1.UserProfileService
+      - jobaggregator.user.v1.ResumeService
+    opt:
+      - target=ts

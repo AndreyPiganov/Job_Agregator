@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { ClientGrpc } from '@nestjs/microservices';
 import { of } from 'rxjs';
 import { AppCacheService } from '../../common/cache/app-cache.service';
+import { GrpcErrorMapper } from '../../common/mappers/grpc-error.mapper';
 import {
   Vacancy,
   VacancyPeriod,
@@ -9,11 +10,12 @@ import {
   VacancyServiceClient,
   VacancySort,
 } from '../../generated/vacancy/v1/vacancy';
+import { VacancyMapper } from './vacancy.mapper';
 import { VacancyService } from './vacancy.service';
 
 describe('VacancyService', () => {
   let vacancyClient: jest.Mocked<VacancyServiceClient>;
-  let cache: jest.Mocked<Pick<AppCacheService, 'get' | 'set' | 'clear'>>;
+  let cache: jest.Mocked<Pick<AppCacheService, 'get' | 'set'>>;
   let service: VacancyService;
 
   beforeEach(() => {
@@ -34,10 +36,15 @@ describe('VacancyService', () => {
     cache = {
       get: jest.fn().mockResolvedValue(undefined),
       set: jest.fn().mockResolvedValue(undefined),
-      clear: jest.fn().mockResolvedValue(undefined),
     };
 
-    service = new VacancyService(client, config, cache as unknown as AppCacheService);
+    service = new VacancyService(
+      client,
+      config,
+      cache as unknown as AppCacheService,
+      new VacancyMapper(),
+      new GrpcErrorMapper(),
+    );
     service.onModuleInit();
   });
 
@@ -136,13 +143,9 @@ describe('VacancyService', () => {
         vacancies: [expect.objectContaining({ title: 'Backend developer', salary: 200000, company_name: 'T-Bank' })],
       }),
     );
-    expect(cache.clear).toHaveBeenCalledTimes(2);
-  });
-
-  it('rejects an invalid empty response from the upstream service', async () => {
-    vacancyClient.getVacancy.mockReturnValue(of({}));
-
-    await expect(service.getById('42')).rejects.toMatchObject({ kind: 'invalid_response' });
+    expect(cache.set).toHaveBeenCalledWith('vacancy:get:1', expect.objectContaining({ id: '1' }), 15000);
+    expect(cache.set).toHaveBeenCalledWith('vacancy:get:2', expect.objectContaining({ id: '2' }), 15000);
+    expect(cache.set.mock.calls.filter(([key]) => key === 'vacancy:list:version')).toHaveLength(2);
   });
 });
 

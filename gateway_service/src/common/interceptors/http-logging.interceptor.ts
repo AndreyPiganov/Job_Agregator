@@ -1,16 +1,7 @@
 import { CallHandler, ExecutionContext, Inject, Injectable, LoggerService, NestInterceptor } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { Observable, tap } from 'rxjs';
-
-interface HttpRequest {
-  method?: string;
-  originalUrl?: string;
-  url?: string;
-}
-
-interface HttpResponse {
-  statusCode?: number;
-}
+import type { HttpRequest, HttpResponse } from '../interfaces/http-logging.interfaces';
 
 @Injectable()
 export class HttpLoggingInterceptor implements NestInterceptor<unknown, unknown> {
