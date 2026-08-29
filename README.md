@@ -41,9 +41,7 @@ Nginx остаётся единой внешней точкой входа.
 - Redis 7.4;
 - Prisma 7 для PostgreSQL-моделей auth- и user-сервисов;
 - Nginx;
-- `chi` — HTTP-маршрутизация;
 - `pgx` и `sqlc` — доступ к PostgreSQL;
-- `go-playground/validator` — валидация HTTP-запросов;
 - Buf и Protovalidate — генерация protobuf-кода и единые правила валидации gRPC-контрактов;
 - `slog` и `lumberjack` — структурированные логи и ротация;
 - Docker и Docker Compose.
@@ -63,9 +61,10 @@ flowchart LR
     UserService --> UserDB[(PostgreSQL user schema)]
     Auth --> AuthDB[(PostgreSQL auth schema)]
     Auth -. future email codes .-> AuthDB
-    Gateway -->|gRPC| Handler[Vacancy transport]
-    Handler --> Service[Vacancy service]
-    Service --> Repository[Repository]
+    Gateway -->|gRPC| Handler[Vacancy gRPC adapter]
+    Handler --> Service[Vacancy service / use cases]
+    Service --> Port[VacancyRepository port]
+    Port --> Repository[PostgreSQL adapter]
     Repository --> SQLC[pgx / sqlc]
     SQLC --> PostgreSQL[(PostgreSQL)]
 ```
@@ -82,25 +81,26 @@ flowchart LR
 - регистрация требует имя и фамилию, создаёт `PENDING` identity, идемпотентно вызывает `CreateUser` по gRPC и только затем активирует identity;
 - `email_codes` уже создаётся миграцией, но не участвует в регистрации до
   подключения SMTP/подтверждения email;
-- внутренний HTTP transport `vacancy_service` оставлен для диагностики и совместимости;
-- `service` содержит прикладные правила, нормализацию пагинации и периода;
-- `repository` выполняет запросы и транзакции;
-- `internal/db` содержит схему, SQL и сгенерированный `sqlc`-код.
+- `vacancy_service` не публикует HTTP: единственный входной адаптер сервиса — gRPC;
+- `internal/service` содержит один читаемый `VacancyService` с use-case-методами;
+- `internal/repository` определяет порт хранения, не зависящий от PostgreSQL;
+- `internal/repository/postgres` реализует порт и содержит pgx/sqlc, SQL и транзакции;
+- `internal/handler/grpc` преобразует protobuf-запросы и ответы, не содержит бизнес-логики.
 
 ## Структура проекта
 
 ```text
 Job_Agregator/
 ├── vacancy_service/          # реализованный сервис вакансий
-│   ├── cmd/vacancy/          # точка входа
+│   ├── cmd/api/              # точка входа API
+│   ├── cmd/healthcheck/      # gRPC healthcheck для контейнера
 │   ├── internal/app/         # сборка зависимостей и lifecycle процесса
 │   ├── internal/config/      # переменные окружения
 │   ├── internal/domain/      # доменные модели и параметры фильтрации
-│   ├── internal/transport/   # HTTP/gRPC адаптеры, validation и ошибки транспорта
+│   ├── internal/service/     # бизнес-сервис и входные DTO
+│   ├── internal/repository/  # порт и PostgreSQL-адаптер
+│   ├── internal/handler/grpc/ # gRPC-адаптер, validation и ошибки транспорта
 │   ├── internal/proto/       # сгенерированные приватные Go protobuf-типы
-│   ├── internal/service/     # прикладная логика
-│   ├── internal/repository/  # PostgreSQL repository
-│   ├── internal/db/          # schema.sql, SQL-запросы и sqlc-код
 │   └── internal/logging/     # настройка логирования
 ├── gateway_service/          # внешний HTTP gateway на NestJS
 │   ├── src/config/            # env validation и логирование
@@ -169,11 +169,10 @@ make ps
 - health Gateway через Nginx: `http://localhost/health`;
 - health самого Nginx: `http://localhost/nginx-health`;
 - прямой Gateway для development-отладки: `http://localhost:3000`;
-- внутренний HTTP API вакансий: `http://localhost:5003`;
 - внутренний gRPC API вакансий: `localhost:50051`;
 - внутренний gRPC API auth-сервиса: `localhost:5005`;
 - внутренний gRPC API user-сервиса: `localhost:5000`;
-- health vacancy_service: `http://localhost:5003/health`;
+- health vacancy_service: стандартный `grpc.health.v1.Health`;
 - PostgreSQL: `localhost:5425`;
 - Redis в development доступен контейнерам в `job-network` и на
   `127.0.0.1:${REDIS_PORT:-6379}` для запуска NestJS-сервисов прямо из WSL;
@@ -184,14 +183,16 @@ make ps
 ```bash
 curl http://localhost/health
 curl http://localhost/nginx-health
-curl http://localhost:5003/health
+make health-vacancy
 ```
 
-Ожидаемый ответ:
+HTTP-команды вернут:
 
 ```json
 {"status":"ok"}
 ```
+
+`make health-vacancy` вернёт `SERVING`.
 
 ### Управление контейнерами
 
@@ -263,7 +264,7 @@ node scripts/http-smoke.mjs
 read-only performance collection и blueprint визуального Flow описаны в
 `postman/README.md`.
 
-## HTTP API
+## Публичный HTTP API Gateway
 
 Все ответы имеют `Content-Type: application/json`.
 
@@ -279,7 +280,7 @@ read-only performance collection и blueprint визуального Flow опи
 ### Создание вакансии
 
 ```bash
-curl -X POST http://localhost:5003/api/v1/vacancies/ \
+curl -X POST http://localhost/api/v1/vacancies/ \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Go developer",
@@ -395,7 +396,6 @@ GET /api/v1/vacancies/filter?q=Backend&search_field=title&search_field=company_n
 | `POSTGRES_DB` | `job` | база данных |
 | `POSTGRES_PORT` | `5425` | порт PostgreSQL на хосте |
 | `DATABASE_URL` | обязательна для production | строка подключения сервиса |
-| `VACANCY_PORT` | `5003` | порт API на хосте |
 | `VACANCY_GRPC_PORT` | `50051` | development gRPC-порт vacancy_service на хосте |
 | `GATEWAY_PORT` | `3000` | прямой development-порт Gateway для отладки |
 | `NGINX_PORT` | `80` | внешний HTTP-порт Nginx |
@@ -424,7 +424,7 @@ Production-образ:
 - запускает приложение от непривилегированного пользователя `app`;
 - использует read-only filesystem и отдельный writable-каталог логов;
 - ограничивает размер Docker JSON-логов;
-- корректно обрабатывает `SIGTERM` и завершает активные HTTP-запросы.
+- корректно обрабатывает `SIGTERM` и завершает активные gRPC-запросы.
 
 В production наружу публикуется только Nginx. Порты Gateway, Redis, gRPC и
 PostgreSQL остаются внутри Compose-сети. Для публичного окружения поверх этой
@@ -455,8 +455,8 @@ var/log/vacancy_service/
 docker compose logs -f vacancy_service
 ```
 
-Docker healthcheck обращается к `/health` каждые 10 секунд. Поэтому регулярные
-записи `GET /health` с `user_agent: Wget` в debug-логах являются нормальными.
+Docker healthcheck каждые 10 секунд вызывает стандартный
+`grpc.health.v1.Health/Check` для Vacancy service.
 
 ## Локальный запуск без Docker для Go-приложения
 
@@ -471,16 +471,16 @@ PowerShell:
 
 ```powershell
 $env:DATABASE_URL="postgresql://root:change-me@localhost:5425/job?sslmode=disable"
-$env:PORT="5003"
-go run ./cmd/vacancy
+$env:GRPC_PORT="50051"
+go run ./cmd/api
 ```
 
 Bash:
 
 ```bash
 export DATABASE_URL="postgresql://root:change-me@localhost:5425/job?sslmode=disable"
-export PORT="5003"
-go run ./cmd/vacancy
+export GRPC_PORT="50051"
+go run ./cmd/api
 ```
 
 Пароль в строке подключения должен совпадать со значением в вашем `.env`.
@@ -504,8 +504,8 @@ make vet
 
 Исходные SQL-файлы:
 
-- `vacancy_service/internal/db/schema.sql`;
-- `vacancy_service/internal/db/queries/vacancy.sql`.
+- `vacancy_service/internal/repository/postgres/db/schema.sql`;
+- `vacancy_service/internal/repository/postgres/db/queries/vacancy.sql`.
 
 После изменения схемы или запросов необходимо обновить сгенерированный код:
 

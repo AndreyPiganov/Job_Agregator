@@ -10,10 +10,10 @@ deps:
 	go mod tidy
 
 run:
-	go run ./cmd/vacancy
+	go run ./cmd/api
 
 build:
-	go build -o bin/vacancy-service ./cmd/vacancy
+	go build -o bin/vacancy-service ./cmd/api
 
 test:
 	go test ./...

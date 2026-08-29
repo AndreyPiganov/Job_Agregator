@@ -60,7 +60,6 @@ services:
       context: ./vacancy_service
       dockerfile: Dockerfile_dev
     ports:
-      - "127.0.0.1:${VACANCY_PORT:-5003}:5003"
       - "127.0.0.1:${VACANCY_GRPC_PORT:-50051}:50051"
     volumes:
       - ./vacancy_service:/app
@@ -68,7 +67,6 @@ services:
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
     environment:
-      PORT: "5003"
       GRPC_PORT: "50051"
       DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=public
       LOG_LEVEL: ${LOG_LEVEL:-debug}
@@ -78,7 +76,7 @@ services:
         condition: service_healthy
         restart: true
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5003/health"]
+      test: ["CMD", "/usr/local/bin/vacancy-healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5

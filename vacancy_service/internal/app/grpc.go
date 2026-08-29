@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"net"
 
+	grpcserver "vacancy_service/internal/handler/grpc"
 	vacancyv1 "vacancy_service/internal/proto/vacancy/v1"
-	grpcserver "vacancy_service/internal/transport/grpc"
 
 	"buf.build/go/protovalidate"
 	protovalidatemiddleware "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"

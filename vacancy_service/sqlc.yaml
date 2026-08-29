@@ -1,12 +1,12 @@
 version: "2"
 sql:
   - engine: "postgresql"
-    schema: "internal/db/schema.sql"
-    queries: "internal/db/queries"
+    schema: "internal/repository/postgres/db/schema.sql"
+    queries: "internal/repository/postgres/db/queries"
     gen:
       go:
         package: "db"
-        out: "internal/db"
+        out: "internal/repository/postgres/db"
         sql_package: "pgx/v5"
         emit_json_tags: true
         # Generated database structs stay internal; db tags are unnecessary

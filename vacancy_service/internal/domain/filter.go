@@ -39,16 +39,3 @@ func (period VacancyPeriod) Duration() (time.Duration, bool) {
 		return 0, false
 	}
 }
-
-type VacancyFilter struct {
-	Keyword      string
-	Cities       []string
-	SearchFields []VacancySearchField
-	MinSalary    *float64
-	MaxSalary    *float64
-	Sort         VacancySort
-	Period       VacancyPeriod
-	CreatedAfter *time.Time
-	Page         int
-	ItemsPerPage int
-}

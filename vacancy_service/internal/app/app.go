@@ -8,11 +8,10 @@ import (
 	"time"
 
 	"vacancy_service/internal/config"
-	"vacancy_service/internal/db"
 	"vacancy_service/internal/logging"
-	vacancyRepository "vacancy_service/internal/repository"
-	vacancyService "vacancy_service/internal/service"
-	"vacancy_service/internal/storage"
+	postgresAdapter "vacancy_service/internal/repository/postgres"
+	"vacancy_service/internal/repository/postgres/db"
+	"vacancy_service/internal/service"
 )
 
 func Run(ctx context.Context) (runErr error) {
@@ -34,7 +33,7 @@ func Run(ctx context.Context) (runErr error) {
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
 	defer cancelStartup()
 
-	pool, err := storage.Open(startupCtx, cfg.DatabaseURL)
+	pool, err := postgresAdapter.Open(startupCtx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -45,16 +44,12 @@ func Run(ctx context.Context) (runErr error) {
 	}
 	cancelStartup()
 
-	repository := vacancyRepository.NewRepository(pool)
-	service := vacancyService.NewService(repository)
-	httpServer, err := newHTTPServer(cfg.Port, service, logger)
+	repository := postgresAdapter.NewVacancyRepository(pool)
+	vacancyService := service.NewVacancyService(repository)
+	grpcServer, err := newGRPCServer(cfg.GRPCPort, vacancyService, logger)
 	if err != nil {
 		return err
 	}
-	grpcServer, err := newGRPCServer(cfg.GRPCPort, service, logger)
-	if err != nil {
-		return errors.Join(err, httpServer.listener.Close())
-	}
 
-	return runServers(ctx, logger, httpServer, grpcServer)
+	return runServer(ctx, logger, grpcServer)
 }

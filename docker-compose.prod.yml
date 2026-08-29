@@ -61,14 +61,11 @@ services:
     build:
       context: ./vacancy_service
       dockerfile: Dockerfile_prod
-    ports:
-      - "127.0.0.1:${VACANCY_PORT:-5003}:5003"
     expose:
       - "50051"
     volumes:
       - ./var/log/vacancy_service:/var/log/vacancy-service
     environment:
-      PORT: "5003"
       GRPC_PORT: "50051"
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -78,7 +75,7 @@ services:
         condition: service_healthy
         restart: true
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5003/health"]
+      test: ["CMD", "/usr/local/bin/vacancy-healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5

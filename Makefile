@@ -156,7 +156,7 @@ health-redis:
 	$(COMPOSE) exec -T redis sh -c 'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping'
 
 health-vacancy:
-	$(COMPOSE) exec -T vacancy_service wget -qO- http://localhost:5003/health
+	$(COMPOSE) exec -T vacancy_service /usr/local/bin/vacancy-healthcheck
 
 health-gateway:
 	$(COMPOSE) exec -T gateway_service wget -qO- http://127.0.0.1:3000/health

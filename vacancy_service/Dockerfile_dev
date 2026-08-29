@@ -6,7 +6,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+RUN CGO_ENABLED=0 go build -o /usr/local/bin/vacancy-healthcheck ./cmd/healthcheck
 
-EXPOSE 5003 50051
+EXPOSE 50051
 
-CMD ["go", "run", "./cmd/vacancy"]
+CMD ["go", "run", "./cmd/api"]

@@ -7,7 +7,6 @@ import (
 )
 
 type Config struct {
-	Port        string
 	GRPCPort    string
 	DatabaseURL string
 	LogLevel    slog.Level
@@ -16,7 +15,6 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		Port:        getEnv("PORT", "5003"),
 		GRPCPort:    getEnv("GRPC_PORT", "50051"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		LogLevel:    parseLogLevel(getEnv("LOG_LEVEL", "info")),
