@@ -1,254 +1,378 @@
 # Job Aggregator
 
-Система для хранения, обновления и поиска вакансий. `vacancy_service` реализует
-домен вакансий на Go, `gateway_service` предоставляет публичный NestJS HTTP API,
-`auth_service` владеет identity/credentials, регистрацией, JWT и refresh-сессиями,
-а `user_service` — профилями соискателей и резюме. Сервисы используют внутренний gRPC,
-Nginx остаётся единой внешней точкой входа.
+Микросервисный backend агрегатора вакансий. Внешний клиент работает только с
+HTTP API в `gateway_service`; остальные сервисы общаются по unary gRPC.
 
-`parser_service` пока зарезервирован под будущую реализацию.
+## Текущее состояние
 
-## Возможности
+Реализованы:
 
-- создание одной вакансии или пакета до 1000 вакансий;
-- обновление существующей вакансии при повторной отправке той же ссылки;
-- получение списка и отдельной вакансии по ID;
-- поиск по заголовку, описанию и названию компании;
-- фильтрация по городам, зарплате и времени публикации;
-- сортировка по дате и зарплате;
-- пагинация;
-- HTTP-валидация и единый формат ошибок;
-- request ID, access logs и восстановление после panic;
-- JSON-логи в stdout и отдельные файлы по уровням;
-- Redis-кэш GET/list/search с инвалидaцией после записи;
-- регистрация и login по email либо номеру телефона;
-- локально проверяемый RS256 access JWT и refresh JWT с атомарной rotation через Redis;
-- Prisma-модели identity/credentials/OAuth в auth и неиспользуемой пока таблицы `auth.email_codes`;
-- Prisma-модели профилей, образования, опыта, резюме и поисковых справочников в user;
-- контакты профиля: регистрационный email/телефон добавляется автоматически, Telegram и GitHub — добровольно;
-- versioned data migration со странами ISO 3166-1 и языками ISO 639-1;
-- справочники направлений образования ОКСО, профессиональных ролей hh.ru и базовых навыков;
-- HTTP auth/user API в Gateway с Passport JWT и gRPC-вызовами внутренних сервисов;
-- unary gRPC API `user_service` для user/profile/resume;
-- единая внешняя точка входа через Nginx;
-- автоматическая подготовка схемы PostgreSQL при запуске.
+- регистрация и вход по email или телефону;
+- RS256 access JWT, refresh JWT, Redis-сессии, rotation и logout;
+- локальная проверка access JWT в Gateway через Passport JWT;
+- профиль соискателя, контакты, образование и опыт работы;
+- создание, изменение, публикация и удаление резюме;
+- создание, пакетная загрузка, получение и фильтрация вакансий;
+- Redis-кэш вакансий, профилей и резюме на уровне Gateway;
+- Swagger, Postman-коллекции и HTTP smoke-тест;
+- Prisma-миграции и справочники `user_service`;
+- development и production Docker Compose.
 
-## Технологии
+Пока не реализованы:
 
-- Go 1.25;
-- Node.js 22 и NestJS 11;
-- PostgreSQL 16;
-- Redis 7.4;
-- Prisma 7 для PostgreSQL-моделей auth- и user-сервисов;
-- Nginx;
-- `pgx` и `sqlc` — доступ к PostgreSQL;
-- Buf и Protovalidate — генерация protobuf-кода и единые правила валидации gRPC-контрактов;
-- `slog` и `lumberjack` — структурированные логи и ротация;
-- Docker и Docker Compose.
+- подтверждение email/телефона и SMTP — таблица `auth.email_codes` существует,
+  но регистрация её пока не использует;
+- OAuth — модель внешних identity подготовлена, самого flow ещё нет;
+- `parser_service`;
+- Kafka/outbox;
+- отдельный migration tool для схемы `vacancy_service`.
 
-## Архитектура
+## Сервисы и ответственность
+
+| Компонент | Ответственность | Внешний транспорт |
+| --- | --- | --- |
+| `nginx` | единая точка входа и reverse proxy | HTTP :80 |
+| `gateway_service` | публичные маршруты, Swagger, HTTP DTO, Passport JWT, кэш и вызовы внутренних сервисов | HTTP :3000 |
+| `auth_service` | identity, password/OAuth credentials, роли, JWT и refresh-сессии | gRPC :5005 |
+| `user_service` | пользователь, контакты, профиль, образование, опыт и резюме | gRPC :5000 |
+| `vacancy_service` | хранение, upsert, чтение и поиск вакансий | gRPC :50051 |
+| PostgreSQL | отдельные схемы `public`, `auth` и `user` | :5432 внутри Compose |
+| Redis | Gateway-кэш в DB 0 и auth-сессии в DB 1 | :6379 внутри Compose |
 
 ```mermaid
 flowchart LR
-    Client[HTTP client] --> Nginx[Nginx]
-    Nginx --> Gateway[Nest Gateway]
-    Gateway --> Redis[(Redis cache)]
-    Gateway -->|register login refresh logout gRPC| Auth[Auth gRPC service]
-    Auth -. RSA public key .-> Gateway
-    Auth --> AuthRedis[(Redis sessions)]
-    Auth -->|unary gRPC CreateUser| UserService[User gRPC service]
-    Gateway -->|Profile and Resume gRPC| UserService
-    UserService --> UserDB[(PostgreSQL user schema)]
-    Auth --> AuthDB[(PostgreSQL auth schema)]
-    Auth -. future email codes .-> AuthDB
-    Gateway -->|gRPC| Handler[Vacancy gRPC adapter]
-    Handler --> Service[Vacancy service / use cases]
-    Service --> Port[VacancyRepository port]
-    Port --> Repository[PostgreSQL adapter]
-    Repository --> SQLC[pgx / sqlc]
-    SQLC --> PostgreSQL[(PostgreSQL)]
+    Client[HTTP client] --> Nginx
+    Nginx --> Gateway[gateway_service]
+    Gateway -->|gRPC| Auth[auth_service]
+    Gateway -->|gRPC| User[user_service]
+    Gateway -->|gRPC| Vacancy[vacancy_service]
+    Gateway -->|cache DB 0| Redis[(Redis)]
+    Auth -->|sessions DB 1| Redis
+    Auth -->|CreateUser gRPC| User
+    Auth --> AuthDB[(PostgreSQL auth)]
+    User --> UserDB[(PostgreSQL user)]
+    Vacancy --> VacancyDB[(PostgreSQL public)]
 ```
 
-- Nginx принимает внешний HTTP-трафик и проксирует его в Gateway;
-- Gateway отвечает за публичный HTTP API, Swagger, DTO-валидацию и Redis-кэш;
-- `vacancy_service` предоставляет gRPC API для Gateway и сохраняет данные;
-- `auth_service` предоставляет внутренние unary gRPC-методы регистрации,
-  login, refresh, validate и logout;
-- Gateway локально проверяет короткоживущий access JWT публичным RSA-ключом;
-  `validate` остаётся для будущих чувствительных операций;
-- `auth_service` владеет identity, password/OAuth credentials, ролями и статусом доступа;
-- `user_service` владеет user-domain anchor, профилями, образованием, опытом и резюме;
-- регистрация требует имя и фамилию, создаёт `PENDING` identity, идемпотентно вызывает `CreateUser` по gRPC и только затем активирует identity;
-- `email_codes` уже создаётся миграцией, но не участвует в регистрации до
-  подключения SMTP/подтверждения email;
-- `vacancy_service` не публикует HTTP: единственный входной адаптер сервиса — gRPC;
-- `internal/service` содержит один читаемый `VacancyService` с use-case-методами;
-- `internal/repository` определяет порт хранения, не зависящий от PostgreSQL;
-- `internal/repository/postgres` реализует порт и содержит pgx/sqlc, SQL и транзакции;
-- `internal/handler/grpc` преобразует protobuf-запросы и ответы, не содержит бизнес-логики.
+### Регистрация
 
-## Структура проекта
+Регистрация требует пароль, имя, фамилию и ровно один идентификатор: email либо
+телефон в E.164. `auth_service` создаёт `PENDING` identity, синхронно и
+идемпотентно вызывает `user_service/CreateUser`, после чего активирует identity
+и создаёт refresh-сессию в Redis. `CreateUser` сразу создаёт минимальный профиль
+и начальный контакт.
+
+Это межсервисный flow без распределённой транзакции: `PENDING` и идемпотентный
+повтор закрывают незавершённую регистрацию.
+
+### Проверка access JWT
+
+Gateway проверяет подпись, срок, issuer, audience и payload access-токена
+локально через `passport-jwt`. Поэтому обычный защищённый HTTP-запрос не делает
+дополнительный вызов в `auth_service`. Внутренний RPC `ValidateAccessToken`
+остаётся для операций, которым в будущем потребуется актуальная проверка
+сессии, статуса identity или ролей.
+
+## Архитектура кода
+
+NestJS-сервисы организованы по бизнес-модулям. Внутри модуля контроллер является
+transport-адаптером, сервис содержит сценарии использования, repository работает
+с Prisma, а mapper преобразует транспортные и persistence-модели. Общие фильтры,
+gRPC proxy, ошибки и инфраструктура находятся в `src/common`.
+
+`vacancy_service` использует прагматичную Clean Architecture:
 
 ```text
-Job_Agregator/
-├── vacancy_service/          # реализованный сервис вакансий
-│   ├── cmd/api/              # точка входа API
-│   ├── cmd/healthcheck/      # gRPC healthcheck для контейнера
-│   ├── internal/app/         # сборка зависимостей и lifecycle процесса
-│   ├── internal/config/      # переменные окружения
-│   ├── internal/domain/      # доменные модели и параметры фильтрации
-│   ├── internal/service/     # бизнес-сервис и входные DTO
-│   ├── internal/repository/  # порт и PostgreSQL-адаптер
-│   ├── internal/handler/grpc/ # gRPC-адаптер, validation и ошибки транспорта
-│   ├── internal/proto/       # сгенерированные приватные Go protobuf-типы
-│   └── internal/logging/     # настройка логирования
-├── gateway_service/          # внешний HTTP gateway на NestJS
-│   ├── src/config/            # env validation и логирование
-│   ├── src/common/            # cache, interceptors и ошибки
-│   └── src/modules/           # функциональные Nest-модули
-├── nginx/                    # reverse proxy и единая точка входа
-├── redis/                    # конфигурация Redis-кэша
-├── contracts/                # версионированные межсервисные protobuf-контракты
-├── parser_service/           # запланирован
-├── auth_service/             # NestJS gRPC, Prisma, JWT и Redis-сессии
-├── user_service/             # NestJS gRPC, Prisma, профили и резюме
-├── docker-compose.yml        # development
-├── docker-compose.prod.yml   # production
-├── Makefile                  # единые команды запуска и проверок
-└── .env.example              # пример конфигурации
+cmd/api
+  └── internal/app                  composition root и lifecycle
+
+internal/handler/grpc               входной gRPC-адаптер
+            ↓
+internal/service/VacancyService     use-case методы
+            ↓
+internal/repository                 VacancyRepository port
+            ↑
+internal/repository/postgres        PostgreSQL/pgx/sqlc adapter
+
+internal/domain                     Vacancy, Company, бизнес-типы и ошибки
+```
+
+В Go-сервисе use-case-методы намеренно находятся в одном читаемом
+`vacancy_service.go`, а не разнесены по одному файлу на метод.
+
+## Структура репозитория
+
+```text
+.
+├── contracts/              исходные versioned protobuf-контракты
+├── gateway_service/        публичный NestJS HTTP API
+├── auth_service/           NestJS gRPC auth и сессии
+├── user_service/           NestJS gRPC user/profile/resume
+├── vacancy_service/        Go gRPC vacancy service
+├── parser_service/         зарезервирован, пока не реализован
+├── nginx/                  reverse proxy
+├── redis/                  конфигурация Redis
+├── postman/                коллекции, environments и flows
+├── scripts/                smoke/benchmark scripts
+├── docker-compose.yml      development
+├── docker-compose.prod.yml production
+├── Makefile                команды проекта
+└── AGENTS.md               архитектурные правила для дальнейшей разработки
 ```
 
 ## Быстрый запуск
 
-### Требования
+Требуются Docker Engine или Docker Desktop с Compose v2. GNU Make удобен, но не
+обязателен.
 
-- Docker Desktop или Docker Engine;
-- Docker Compose v2.
-- GNU Make для сокращённых команд (необязательно: их можно заменить на `docker compose`).
-
-Go и PostgreSQL на хосте для запуска через Docker не требуются.
-
-### 1. Настройте окружение
-
-Создайте `.env` из примера, если файла ещё нет.
-
-PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Bash:
+Создайте локальный env-файл:
 
 ```bash
 cp .env.example .env
 ```
 
-Для локальной разработки достаточно значений из примера. Файл `.env` не нужно
-добавлять в Git.
-
-### 2. Запустите проект
-
-Основной запуск всей системы с логами в терминале:
+Затем запустите весь development stack:
 
 ```bash
 make dev
 ```
 
-Или запуск в фоне:
+Для запуска в фоне:
 
 ```bash
 make up-build
 make ps
+make health
 ```
 
-После запуска:
+Адреса development-окружения:
 
-- публичный API через Nginx: `http://localhost`;
-- Swagger через Nginx: `http://localhost/api-docs`;
-- health Gateway через Nginx: `http://localhost/health`;
-- health самого Nginx: `http://localhost/nginx-health`;
-- прямой Gateway для development-отладки: `http://localhost:3000`;
-- внутренний gRPC API вакансий: `localhost:50051`;
-- внутренний gRPC API auth-сервиса: `localhost:5005`;
-- внутренний gRPC API user-сервиса: `localhost:5000`;
-- health vacancy_service: стандартный `grpc.health.v1.Health`;
+- API через Nginx: `http://localhost`;
+- Swagger: `http://localhost/api-docs`;
+- Gateway напрямую: `http://localhost:3000`;
 - PostgreSQL: `localhost:5425`;
-- Redis в development доступен контейнерам в `job-network` и на
-  `127.0.0.1:${REDIS_PORT:-6379}` для запуска NestJS-сервисов прямо из WSL;
-  production Compose наружу его не публикует.
+- Redis: `localhost:6379`;
+- внутренние gRPC-порты на host: Vacancy `50051`, Auth `5005`, User `5000`.
 
-Проверка:
+В production наружу публикуется только Nginx.
+
+## Публичный HTTP API
+
+Swagger по адресу `/api-docs` является подробным источником DTO и enum-значений.
+
+### Системные и auth-маршруты
+
+| Метод | Маршрут | Авторизация | Назначение |
+| --- | --- | --- | --- |
+| `GET` | `/health` | нет | health Gateway |
+| `POST` | `/api/v1/auth/register` | нет | регистрация |
+| `POST` | `/api/v1/auth/login` | нет | вход |
+| `POST` | `/api/v1/auth/refresh` | нет | rotation refresh-токена |
+| `POST` | `/api/v1/auth/logout` | нет | отзыв refresh-сессии |
+| `GET` | `/api/v1/auth/me` | Bearer access JWT | текущий principal из access JWT |
+
+Регистрация по email:
 
 ```bash
-curl http://localhost/health
-curl http://localhost/nginx-health
-make health-vacancy
+curl -X POST http://localhost/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "ivan@example.com",
+    "password": "strong-password-123",
+    "first_name": "Иван",
+    "last_name": "Петров"
+  }'
 ```
 
-HTTP-команды вернут:
+Для регистрации по телефону передайте `phone_number` вместо `email`:
 
 ```json
-{"status":"ok"}
+{
+  "phone_number": "+79991234567",
+  "password": "strong-password-123",
+  "first_name": "Иван",
+  "last_name": "Петров"
+}
 ```
 
-`make health-vacancy` вернёт `SERVING`.
+Login использует единое поле `identifier`:
 
-### Управление контейнерами
+```json
+{
+  "identifier": "ivan@example.com",
+  "password": "strong-password-123"
+}
+```
+
+### Vacancy-маршруты
+
+| Метод | Маршрут | Назначение |
+| --- | --- | --- |
+| `GET` | `/api/v1/vacancies` | список и фильтрация |
+| `GET` | `/api/v1/vacancies/filter` | совместимый alias списка с фильтрами |
+| `GET` | `/api/v1/vacancies/:id` | вакансия по ID |
+| `POST` | `/api/v1/vacancies` | создать или обновить по уникальной ссылке |
+| `POST` | `/api/v1/vacancies/batch` | пакетный upsert до 1000 вакансий |
+
+Сейчас эти маршруты не защищены JWT, включая запись.
+
+Пример создания:
 
 ```bash
-docker compose logs -f vacancy_service
-docker compose restart vacancy_service
-docker compose down
+curl -X POST http://localhost/api/v1/vacancies \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "title": "Go developer",
+    "description": "Разработка backend-сервисов",
+    "salary": 180000,
+    "link": "https://example.com/vacancies/42",
+    "city": "Moscow",
+    "company_name": "Example"
+  }'
 ```
 
-Обычный `docker compose down` сохраняет данные PostgreSQL. Команда ниже удаляет
-named volume вместе с базой данных:
+Batch endpoint принимает только JSON-массив, а не объект `{ "vacancies": [] }`:
+
+```json
+[
+  {
+    "title": "Go developer",
+    "description": "Backend",
+    "salary": 180000,
+    "link": "https://example.com/vacancies/42",
+    "city": "Moscow",
+    "company_name": "Example"
+  }
+]
+```
+
+Параметры списка:
+
+| Параметр | Значение |
+| --- | --- |
+| `page` | страница от 1, по умолчанию 1 |
+| `items_per_page` | от 1 до 100, по умолчанию 10 |
+| `q` | поисковая строка до 200 символов |
+| `search_field` | `title`, `description`, `company_name`; можно повторять или разделять запятыми |
+| `city` | можно повторять или разделять запятыми |
+| `min_salary`, `max_salary` | неотрицательные числа |
+| `sort` | `date_desc`, `date_asc`, `salary_desc`, `salary_asc` |
+| `period` | `day`, `3_days`, `week` |
+
+Пример:
+
+```text
+GET /api/v1/vacancies?q=Go&search_field=title&city=Moscow&min_salary=100000&sort=salary_desc&period=week&page=1&items_per_page=20
+```
+
+### User/profile/resume-маршруты
+
+Все маршруты ниже требуют `Authorization: Bearer <access_token>`.
+
+| Метод | Маршрут | Назначение |
+| --- | --- | --- |
+| `GET` | `/api/v1/users/me/profile` | профиль текущего пользователя |
+| `PUT` | `/api/v1/users/me/profile` | полная запись профиля, контактов, языков и гражданств |
+| `POST` | `/api/v1/users/me/educations` | добавить образование |
+| `PUT` | `/api/v1/users/me/educations/:educationId` | заменить образование |
+| `DELETE` | `/api/v1/users/me/educations/:educationId` | удалить образование |
+| `POST` | `/api/v1/users/me/work-experiences` | добавить опыт |
+| `PUT` | `/api/v1/users/me/work-experiences/:workExperienceId` | заменить опыт |
+| `DELETE` | `/api/v1/users/me/work-experiences/:workExperienceId` | удалить опыт |
+| `POST` | `/api/v1/users/me/resumes` | создать резюме |
+| `GET` | `/api/v1/users/me/resumes` | список своих резюме |
+| `GET` | `/api/v1/users/me/resumes/:resumeId` | получить своё резюме |
+| `PUT` | `/api/v1/users/me/resumes/:resumeId` | заменить резюме |
+| `PATCH` | `/api/v1/users/me/resumes/:resumeId/status` | изменить статус публикации |
+| `DELETE` | `/api/v1/users/me/resumes/:resumeId` | удалить резюме |
+
+HTTP DTO используют `snake_case`. Конкретные значения protobuf enum удобнее
+смотреть в Swagger или в `contracts/user/v1/user.proto`.
+
+## Конфигурация
+
+Полный список и development-значения находятся в `.env.example`. Основные
+группы переменных:
+
+- PostgreSQL: `POSTGRES_*`, `DATABASE_URL`, `AUTH_DATABASE_URL`, `USER_DATABASE_URL`;
+- Redis: `REDIS_*`, `AUTH_SESSION_NAMESPACE`, `CACHE_*`;
+- gRPC: `VACANCY_GRPC_*`, `AUTH_GRPC_*`, `USER_GRPC_*`;
+- JWT: `JWT_ACCESS_PRIVATE_KEY_BASE64`, `JWT_ACCESS_PUBLIC_KEY_BASE64`,
+  `JWT_REFRESH_SECRET`, TTL, issuer и audience;
+- HTTP/logging: `NGINX_PORT`, `GATEWAY_PORT`, `LOG_LEVEL`, `LOG_DIR`.
+
+Development использует встроенную тестовую RSA-пару, если ключи не переданы.
+Production Compose требует собственные согласованные PKCS#8 private и SPKI public
+RSA-ключи в base64, отдельный refresh secret и явные database URLs.
+
+## Команды разработки
 
 ```bash
-docker compose down -v
+make help              # список основных команд
+make config            # проверить development Compose
+make dev               # build и запуск с логами
+make up-build           # build и запуск в фоне
+make down               # удалить контейнеры, сохранить PostgreSQL volume
+make down-volumes       # удалить контейнеры и данные PostgreSQL
+make logs               # логи всех контейнеров
+make health             # Redis, Gateway, Nginx и Vacancy healthchecks
 ```
 
-Корневые сокращения для Docker Compose:
+Проверки исходников:
 
 ```bash
-make up             # запустить development-контейнеры
-make up-build       # пересобрать и запустить
-make logs-vacancy   # смотреть логи vacancy_service
-make logs-gateway   # смотреть логи gateway_service
-make logs-nginx     # смотреть access/error логи Nginx
-make logs-redis     # смотреть логи Redis
-make redis-cli      # открыть аутентифицированный redis-cli
-make down           # остановить, сохранив PostgreSQL volume
-make down-volumes   # остановить и удалить данные PostgreSQL
+make test               # тесты всех реализованных сервисов
+make check              # format check, lint/test/build по сервисам
+make vacancy-check
+make gateway-check
+make auth-check
+make user-check
 ```
 
-Проверки исходного кода также запускаются из корня через Makefile:
+## Контракты и генерация
+
+Исходниками являются только файлы в `contracts/*/v1/*.proto`. Сгенерированные
+файлы в `src/generated` и `vacancy_service/internal/proto` вручную не изменяются.
 
 ```bash
-make test             # запустить тесты реализованных сервисов
-make vet              # выполнить go vet
-make vacancy-build    # собрать vacancy_service
-make gateway-build    # собрать gateway_service
-make gateway-check    # проверить форматирование, lint, тесты и сборку gateway
-make auth-build       # собрать auth_service
-make auth-check       # Prisma validate, формат, lint, тесты и сборка auth
-make user-build       # собрать user_service
-make user-check       # Prisma validate, формат, lint, тесты и сборка user
-make check            # проверить и собрать все реализованные сервисы
-make proto-generate   # обновить весь Go/NestJS protobuf-код и descriptor sets
-make sqlc-generate    # обновить код, сгенерированный sqlc
+make proto-tools
+make proto-generate
 ```
 
-Полный HTTP smoke-тест регистрирует отдельного пользователя, проходит auth,
-profile, resume и vacancy API, а затем измеряет прогретые GET-запросы:
+После изменения SQL vacancy-сервиса:
+
+```bash
+make sqlc-install
+make sqlc-vet
+make sqlc-generate
+```
+
+## База данных и миграции
+
+- `auth_service` и `user_service` используют Prisma migrations;
+- development/production контейнеры выполняют `prisma migrate deploy` перед запуском;
+- Prisma-модели используют camelCase в TypeScript и `@map`/`@@map` для
+  snake_case имён PostgreSQL;
+- `vacancy_service` пока выполняет встроенный идемпотентный `schema.sql` при
+  старте; сложные изменения этой схемы требуют будущего migration tool.
+
+Не изменяйте уже применённые Prisma-миграции. Для изменения схемы создавайте
+новую миграцию и проверяйте `prisma validate`, генерацию клиента и сборку.
+
+## Postman и smoke-тест
+
+- инструкция: `postman/README.md`;
+- основная коллекция: `postman/job-aggregator.postman_collection.json`;
+- environments: `postman/environments`;
+- Flow blueprint: `postman/flows`.
+
+Автоматический smoke-тест:
 
 ```bash
 node scripts/http-smoke.mjs
 ```
 
-Адрес Gateway, количество запросов и конкурентность можно изменить без правки
-скрипта:
+Настройка нагрузки:
 
 ```bash
 BASE_URL=http://127.0.0.1:3000 \
@@ -257,275 +381,17 @@ BENCHMARK_CONCURRENCY=10 \
 node scripts/http-smoke.mjs
 ```
 
-Коллекция `postman/job-aggregator.postman_collection.json` содержит все HTTP
-маршруты Gateway и готова к запуску целиком через Postman Collection Runner.
-Токены и ID созданных сущностей записываются в переменные коллекции
-автоматически. Дополнительные environments, negative/security checks,
-read-only performance collection и blueprint визуального Flow описаны в
-`postman/README.md`.
-
-## Публичный HTTP API Gateway
-
-Все ответы имеют `Content-Type: application/json`.
-
-| Метод | Маршрут | Назначение |
-| --- | --- | --- |
-| `GET` | `/health` | состояние сервиса |
-| `GET` | `/api/v1/vacancies/?page=1&itemsPerPage=10` | список вакансий |
-| `GET` | `/api/v1/vacancies/{id}` | вакансия по ID |
-| `POST` | `/api/v1/vacancies/` | создать или обновить вакансию |
-| `POST` | `/api/v1/vacancies/batch` | создать или обновить пакет вакансий |
-| `GET` | `/api/v1/vacancies/filter` | поиск, фильтрация и сортировка |
-
-### Создание вакансии
-
-```bash
-curl -X POST http://localhost/api/v1/vacancies/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Go developer",
-    "description": "Разработка backend-сервисов",
-    "salary": 180000,
-    "city": "Moscow",
-    "link": "https://example.com/vacancies/42",
-    "companyName": "Example"
-  }'
-```
-
-Ограничения основных полей:
-
-- `title` — обязательное, до 200 символов;
-- `description` — обязательное, до 10 000 символов;
-- `salary` — неотрицательное число;
-- `city` — обязательное, до 100 символов;
-- `link` — обязательный URL, до 2048 символов;
-- `companyName` — обязательное, до 200 символов.
-
-Поле `link` уникально. Если вакансия с такой ссылкой уже существует, сервис
-обновит её данные вместо создания дубликата.
-
-### Пакетное создание
-
-Endpoint принимает JSON-массив:
-
-```json
-[
-  {
-    "title": "Go developer",
-    "description": "Backend",
-    "salary": 180000,
-    "city": "Moscow",
-    "link": "https://example.com/vacancies/42",
-    "companyName": "Example"
-  }
-]
-```
-
-Или объект с полем `vacancies`:
-
-```json
-{
-  "vacancies": [
-    {
-      "title": "Go developer",
-      "description": "Backend",
-      "salary": 180000,
-      "city": "Moscow",
-      "link": "https://example.com/vacancies/42",
-      "companyName": "Example"
-    }
-  ]
-}
-```
-
-Максимальный размер пакета — 1000 вакансий. Пакет сохраняется в одной
-транзакции: при ошибке изменения откатываются.
-
-### Поиск и фильтрация
-
-Пример комбинированного запроса:
-
-```text
-GET /api/v1/vacancies/filter?q=Backend&search_field=title&search_field=company_name&city=Moscow,Kazan&minSalary=100000&sort=salary_desc&period=week&page=1&itemsPerPage=20
-```
-
-| Параметр | Значения | Описание |
-| --- | --- | --- |
-| `q` | строка до 200 символов | искомая подстрока, регистр не учитывается |
-| `search_field` | `title`, `description`, `company_name` | поле поиска; параметр можно повторять или передать через запятую |
-| `city` | название города | точное совпадение без учёта регистра; можно повторять или перечислять через запятую |
-| `minSalary` | число `>= 0` | минимальная зарплата |
-| `maxSalary` | число `>= 0` | максимальная зарплата |
-| `sort` | `date_desc`, `date_asc`, `salary_desc`, `salary_asc` | сортировка; по умолчанию `date_desc` |
-| `period` | `day`, `3_days`, `week` | публикации за последние 24, 72 или 168 часов |
-| `page` | целое число от 1 | страница, по умолчанию 1 |
-| `itemsPerPage` | от 1 до 100 | размер страницы, по умолчанию 10 |
-
-Если передан `q`, но отсутствует `search_field`, поиск выполняется одновременно
-по `title`, `description` и `company_name`. Передавать `search_field` без `q`
-нельзя.
-
-Период является скользящим: `day` означает последние 24 часа, а не время с
-начала текущего календарного дня.
-
-### Формат ошибок
-
-```json
-{
-  "code": "validation_failed",
-  "message": "Validation failed",
-  "errors": [
-    {
-      "field": "Title",
-      "code": "required",
-      "message": "Title is required"
-    }
-  ]
-}
-```
-
-Внутренние ошибки не раскрывают детали PostgreSQL или stack trace клиенту — они
-попадают только в логи.
-
-## Переменные окружения
-
-| Переменная | По умолчанию | Назначение |
-| --- | --- | --- |
-| `POSTGRES_USER` | `root` в development | пользователь PostgreSQL |
-| `POSTGRES_PASSWORD` | `example` в development | пароль PostgreSQL |
-| `POSTGRES_DB` | `job` | база данных |
-| `POSTGRES_PORT` | `5425` | порт PostgreSQL на хосте |
-| `DATABASE_URL` | обязательна для production | строка подключения сервиса |
-| `VACANCY_GRPC_PORT` | `50051` | development gRPC-порт vacancy_service на хосте |
-| `GATEWAY_PORT` | `3000` | прямой development-порт Gateway для отладки |
-| `NGINX_PORT` | `80` | внешний HTTP-порт Nginx |
-| `REDIS_PASSWORD` | `change-me` в development | пароль внутреннего Redis; обязателен в production |
-| `REDIS_CONNECT_TIMEOUT_MS` | `500` | таймаут подключения Gateway к Redis |
-| `CACHE_TTL_MS` | `15000` | TTL записей Gateway-кэша в миллисекундах |
-| `CACHE_NAMESPACE` | `job-aggregator:gateway` | namespace ключей Gateway в Redis |
-| `CACHE_FAILURE_COOLDOWN_MS` | `5000` | пауза перед повторной попыткой после ошибки Redis |
-| `LOG_LEVEL` | `debug` в development, `info` в production | минимальный уровень stdout-логов |
-| `LOG_DIR` | `/var/log/vacancy-service` в контейнере | каталог файловых логов |
-
-Значения production-секретов нельзя хранить в Git. Перед production-запуском
-обязательно замените пароли. Пароль PostgreSQL должен совпадать в
-`POSTGRES_PASSWORD` и `DATABASE_URL`, а `REDIS_PASSWORD` — в Redis и Gateway.
-
 ## Production
 
-```bash
-docker compose -f docker-compose.prod.yml up --build -d
-docker compose -f docker-compose.prod.yml ps
-```
-
-Production-образ:
-
-- собирает статический Go-бинарник в multi-stage build;
-- запускает приложение от непривилегированного пользователя `app`;
-- использует read-only filesystem и отдельный writable-каталог логов;
-- ограничивает размер Docker JSON-логов;
-- корректно обрабатывает `SIGTERM` и завершает активные gRPC-запросы.
-
-В production наружу публикуется только Nginx. Порты Gateway, Redis, gRPC и
-PostgreSQL остаются внутри Compose-сети. Для публичного окружения поверх этой
-конфигурации необходимо настроить TLS-сертификат и HTTPS.
-
-## Логи
-
-Сервис пишет JSON-логи в stdout и разделяет файловые логи по уровню:
-
-```text
-var/log/vacancy_service/
-├── debug.log
-├── info.log
-├── warn.log
-└── error.log
-```
-
-Ротация каждого файла:
-
-- максимальный размер — 20 MB;
-- до 5 резервных файлов;
-- хранение до 14 дней;
-- старые файлы сжимаются.
-
-Просмотр stdout:
+Перед запуском заполните обязательные production secrets и URLs в `.env`:
 
 ```bash
-docker compose logs -f vacancy_service
+make prod-config
+make prod-build
+make prod-ps
 ```
 
-Docker healthcheck каждые 10 секунд вызывает стандартный
-`grpc.health.v1.Health/Check` для Vacancy service.
-
-## Локальный запуск без Docker для Go-приложения
-
-Сначала запустите только PostgreSQL:
-
-```bash
-docker compose up -d postgres
-cd vacancy_service
-```
-
-PowerShell:
-
-```powershell
-$env:DATABASE_URL="postgresql://root:change-me@localhost:5425/job?sslmode=disable"
-$env:GRPC_PORT="50051"
-go run ./cmd/api
-```
-
-Bash:
-
-```bash
-export DATABASE_URL="postgresql://root:change-me@localhost:5425/job?sslmode=disable"
-export GRPC_PORT="50051"
-go run ./cmd/api
-```
-
-Пароль в строке подключения должен совпадать со значением в вашем `.env`.
-
-## Тесты и проверка кода
-
-```bash
-cd vacancy_service
-go test ./...
-go vet ./...
-```
-
-Или через Makefile сервиса:
-
-```bash
-make test
-make vet
-```
-
-## SQL и sqlc
-
-Исходные SQL-файлы:
-
-- `vacancy_service/internal/repository/postgres/db/schema.sql`;
-- `vacancy_service/internal/repository/postgres/db/queries/vacancy.sql`.
-
-После изменения схемы или запросов необходимо обновить сгенерированный код:
-
-```bash
-cd vacancy_service
-make sqlc-install
-make sqlc-vet
-make sqlc-generate
-go test ./...
-```
-
-Сейчас `schema.sql` выполняется приложением при старте через `CREATE TABLE IF NOT
-EXISTS` и `CREATE INDEX IF NOT EXISTS`. Для сложных изменений схемы в дальнейшем
-стоит подключить версионируемые миграции.
-
-## Планы развития
-
-- реализовать `parser_service` для сбора вакансий из внешних источников;
-- подключить подтверждение email и OAuth к `auth_service`;
-- добавить разграничение доступа к доменным endpoints;
-- вынести изменения схемы vacancy-сервиса в отдельный migration tool;
-- добавить интеграционные тесты PostgreSQL;
-- добавить OpenAPI-спецификацию и метрики.
+Прикладные production-контейнеры, Redis и Nginx запускаются с read-only
+filesystem, tmpfs для временных файлов, `no-new-privileges` и ограниченной
+ротацией Docker-логов. PostgreSQL использует постоянный volume. Для публичного
+окружения поверх текущего Nginx необходимо настроить TLS/HTTPS.
