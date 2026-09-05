@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:22-alpine AS base
 
 WORKDIR /app
 
@@ -6,10 +6,24 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
+
+FROM base AS development
+
+ENV NODE_ENV=development \
+    LOG_DIR=/var/log/user-service
+
+RUN mkdir -p /var/log/user-service
+
+EXPOSE 5000
+
+CMD ["npm", "run", "start:dev"]
+
+FROM base AS builder
+
 RUN npm run build
 RUN npm prune --omit=dev
 
-FROM node:22-alpine AS final
+FROM node:22-alpine AS production
 
 ENV NODE_ENV=production \
     LOG_DIR=/var/log/user-service

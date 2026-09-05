@@ -207,6 +207,17 @@ internal/logging/                настройка логирования
   и build соответствующего сервиса.
 - Не удаляйте пользовательские или чужие изменения из dirty worktree.
 
+## Docker и окружения
+
+- У каждого реализованного микросервиса один многостадийный `Dockerfile`
+  со стадиями `development` и `production`; общие шаги сборки не дублируются.
+- `docker-compose.yml` содержит общую конфигурацию, а автоматически подключаемый
+  `docker-compose.override.yml` выбирает development-настройки по умолчанию.
+- Production явно объединяет `docker-compose.yml` и `docker-compose.prod.yml`;
+  dev override не должен попадать в production-команды или CI.
+- Режим Node.js задаётся через `NODE_ENV`; состав образа выбирается через
+  `build.target`. Production остаётся последней стадией Dockerfile.
+
 ## Проверка изменений
 
 Запускайте проверки пропорционально затронутому коду:

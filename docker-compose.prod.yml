@@ -1,45 +1,18 @@
 services:
   postgres:
-    image: postgres:16-alpine
-    container_name: postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${POSTGRES_DB:-job}
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    networks:
-      - job-network
 
   redis:
-    container_name: redis
-    restart: unless-stopped
-    init: true
-    build:
-      context: ./redis
-      dockerfile: Dockerfile
     command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
     read_only: true
     tmpfs:
       - /data
@@ -47,38 +20,18 @@ services:
     security_opt:
       - no-new-privileges:true
     logging:
-      driver: json-file
       options:
-        max-size: "10m"
         max-file: "5"
-    networks:
-      - job-network
 
   vacancy_service:
-    container_name: vacancy_service
-    restart: unless-stopped
-    init: true
     build:
-      context: ./vacancy_service
-      dockerfile: Dockerfile_prod
+      target: production
     expose:
       - "50051"
-    volumes:
-      - ./var/log/vacancy_service:/var/log/vacancy-service
     environment:
-      GRPC_PORT: "50051"
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_DIR: /var/log/vacancy-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-        restart: true
     healthcheck:
-      test: ["CMD", "/usr/local/bin/vacancy-healthcheck"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
       start_period: 10s
     read_only: true
     tmpfs:
@@ -86,154 +39,59 @@ services:
     security_opt:
       - no-new-privileges:true
     logging:
-      driver: json-file
       options:
-        max-size: "10m"
         max-file: "5"
-    networks:
-      - job-network
 
   auth_service:
-    container_name: auth_service
-    restart: unless-stopped
-    init: true
     build:
-      context: ./auth_service
-      dockerfile: Dockerfile_prod
+      target: production
     expose:
       - "5005"
-    volumes:
-      - ./var/log/auth_service:/var/log/auth-service
     environment:
       NODE_ENV: production
-      GRPC_HOST: 0.0.0.0
-      GRPC_PORT: "5005"
-      USER_GRPC_URL: user_service:5000
-      USER_GRPC_TIMEOUT_MS: ${USER_GRPC_TIMEOUT_MS:-3000}
       DATABASE_URL: ${AUTH_DATABASE_URL:?AUTH_DATABASE_URL is required}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-      REDIS_DB: "1"
-      REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-500}
-      AUTH_SESSION_NAMESPACE: ${AUTH_SESSION_NAMESPACE:-job-aggregator:auth}
       JWT_ACCESS_PRIVATE_KEY_BASE64: ${JWT_ACCESS_PRIVATE_KEY_BASE64:?JWT_ACCESS_PRIVATE_KEY_BASE64 is required}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
-      JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-600}
-      JWT_REFRESH_TTL_SECONDS: ${JWT_REFRESH_TTL_SECONDS:-2592000}
-      JWT_ISSUER: ${JWT_ISSUER:-job-aggregator-auth}
-      JWT_AUDIENCE: ${JWT_AUDIENCE:-job-aggregator-services}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_DIR: /var/log/auth-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-        restart: true
-      redis:
-        condition: service_healthy
-        restart: true
-      user_service:
-        condition: service_started
-        restart: true
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
     logging:
-      driver: json-file
       options:
-        max-size: "10m"
         max-file: "5"
-    networks:
-      - job-network
 
   user_service:
-    container_name: user_service
-    restart: unless-stopped
-    init: true
     build:
-      context: ./user_service
-      dockerfile: Dockerfile_prod
+      target: production
     expose:
       - "5000"
-    volumes:
-      - ./var/log/user_service:/var/log/user-service
     environment:
       NODE_ENV: production
-      GRPC_HOST: 0.0.0.0
-      GRPC_PORT: "5000"
       DATABASE_URL: ${USER_DATABASE_URL:?USER_DATABASE_URL is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_DIR: /var/log/user-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-        restart: true
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
     logging:
-      driver: json-file
       options:
-        max-size: "10m"
         max-file: "5"
-    networks:
-      - job-network
 
   gateway_service:
-    container_name: gateway_service
-    restart: unless-stopped
-    init: true
     build:
-      context: ./gateway_service
-      dockerfile: Dockerfile_prod
+      target: production
     expose:
       - "3000"
-    volumes:
-      - ./var/log/gateway_service:/var/log/gateway-service
     environment:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_DIR: /var/log/gateway-service
-      PORT: "3000"
-      AUTH_GRPC_URL: auth_service:5005
-      AUTH_GRPC_TIMEOUT_MS: ${AUTH_GRPC_TIMEOUT_MS:-3000}
-      USER_GRPC_URL: user_service:5000
-      USER_GRPC_TIMEOUT_MS: ${USER_GRPC_TIMEOUT_MS:-3000}
-      VACANCY_GRPC_URL: vacancy_service:50051
-      VACANCY_GRPC_TIMEOUT_MS: ${VACANCY_GRPC_TIMEOUT_MS:-3000}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-      REDIS_DB: "0"
-      REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-500}
-      CACHE_TTL_MS: ${CACHE_TTL_MS:-15000}
-      CACHE_NAMESPACE: ${CACHE_NAMESPACE:-job-aggregator:gateway}
-      CACHE_FAILURE_COOLDOWN_MS: ${CACHE_FAILURE_COOLDOWN_MS:-5000}
       JWT_ACCESS_PUBLIC_KEY_BASE64: ${JWT_ACCESS_PUBLIC_KEY_BASE64:?JWT_ACCESS_PUBLIC_KEY_BASE64 is required}
-      JWT_ISSUER: ${JWT_ISSUER:-job-aggregator-auth}
-      JWT_AUDIENCE: ${JWT_AUDIENCE:-job-aggregator-services}
-    depends_on:
-      vacancy_service:
-        condition: service_healthy
-        restart: true
-      auth_service:
-        condition: service_started
-        restart: true
-      user_service:
-        condition: service_started
-        restart: true
-      redis:
-        condition: service_healthy
-        restart: true
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
       start_period: 10s
     read_only: true
     tmpfs:
@@ -241,32 +99,12 @@ services:
     security_opt:
       - no-new-privileges:true
     logging:
-      driver: json-file
       options:
-        max-size: "10m"
         max-file: "5"
-    networks:
-      - job-network
 
   nginx:
-    container_name: nginx
-    restart: unless-stopped
-    init: true
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
     ports:
       - "${NGINX_PORT:-80}:80"
-    depends_on:
-      gateway_service:
-        condition: service_healthy
-        restart: true
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/nginx-health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
     read_only: true
     tmpfs:
       - /var/cache/nginx
@@ -275,16 +113,5 @@ services:
     security_opt:
       - no-new-privileges:true
     logging:
-      driver: json-file
       options:
-        max-size: "10m"
         max-file: "5"
-    networks:
-      - job-network
-
-networks:
-  job-network:
-    driver: bridge
-
-volumes:
-  postgres:

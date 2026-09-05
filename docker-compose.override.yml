@@ -1,0 +1,111 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-example}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5425}:5432"
+
+  redis:
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    logging:
+      options:
+        max-file: "3"
+
+  vacancy_service:
+    build:
+      target: development
+    ports:
+      - "127.0.0.1:${VACANCY_GRPC_PORT:-50051}:50051"
+    volumes:
+      - ./vacancy_service:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=public
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    healthcheck:
+      start_period: 20s
+    logging:
+      options:
+        max-file: "3"
+
+  auth_service:
+    build:
+      target: development
+    command: ["sh", "-c", "npm run prisma:migrate:deploy && npm run start:dev"]
+    ports:
+      - "127.0.0.1:${AUTH_GRPC_PORT:-5005}:5005"
+    volumes:
+      - ./auth_service/src:/app/src
+      - ./auth_service/prisma:/app/prisma
+      - ./auth_service/prisma.config.ts:/app/prisma.config.ts:ro
+      - ./auth_service/nest-cli.json:/app/nest-cli.json:ro
+      - ./auth_service/tsconfig.json:/app/tsconfig.json:ro
+      - ./auth_service/tsconfig.build.json:/app/tsconfig.build.json:ro
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=auth
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-development-refresh-secret-change-before-production}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    logging:
+      options:
+        max-file: "3"
+
+  user_service:
+    build:
+      target: development
+    command: ["sh", "-c", "npm run prisma:migrate:deploy && npm run start:dev"]
+    ports:
+      - "127.0.0.1:${USER_GRPC_PORT:-5000}:5000"
+    volumes:
+      - ./user_service/src:/app/src
+      - ./user_service/prisma:/app/prisma
+      - ./user_service/prisma.config.ts:/app/prisma.config.ts:ro
+      - ./user_service/nest-cli.json:/app/nest-cli.json:ro
+      - ./user_service/tsconfig.json:/app/tsconfig.json:ro
+      - ./user_service/tsconfig.build.json:/app/tsconfig.build.json:ro
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=user
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    logging:
+      options:
+        max-file: "3"
+
+  gateway_service:
+    build:
+      target: development
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-3000}:3000"
+    volumes:
+      - ./gateway_service/src:/app/src
+      - ./gateway_service/test:/app/test
+      - ./gateway_service/nest-cli.json:/app/nest-cli.json:ro
+      - ./gateway_service/tsconfig.json:/app/tsconfig.json:ro
+      - ./gateway_service/tsconfig.build.json:/app/tsconfig.build.json:ro
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
+    healthcheck:
+      start_period: 20s
+    logging:
+      options:
+        max-file: "3"
+
+  nginx:
+    ports:
+      - "127.0.0.1:${NGINX_PORT:-80}:80"
+    logging:
+      options:
+        max-file: "3"
+
+volumes:
+  go-mod-cache:
+  go-build-cache:

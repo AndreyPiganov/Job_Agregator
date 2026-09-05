@@ -114,8 +114,9 @@ internal/domain                     Vacancy, Company, бизнес-типы и �
 ├── redis/                  конфигурация Redis
 ├── postman/                коллекции, environments и flows
 ├── scripts/                smoke/benchmark scripts
-├── docker-compose.yml      development
-├── docker-compose.prod.yml production
+├── docker-compose.yml      общая Compose-конфигурация
+├── docker-compose.override.yml development override по умолчанию
+├── docker-compose.prod.yml production override
 ├── Makefile                команды проекта
 └── AGENTS.md               архитектурные правила для дальнейшей разработки
 ```
@@ -155,6 +156,34 @@ make health
 - внутренние gRPC-порты на host: Vacancy `50051`, Auth `5005`, User `5000`.
 
 В production наружу публикуется только Nginx.
+
+### Dockerfile и выбор среды
+
+У каждого реализованного микросервиса один многостадийный `Dockerfile`.
+Compose выбирает стадию сборки через `build.target`:
+
+- `docker-compose.yml` содержит общие настройки сервисов;
+- `docker-compose.override.yml` автоматически добавляет `development`: исходники,
+  локальные порты и запуск NestJS в watch-режиме или Go через `go run`;
+- `docker-compose.prod.yml` добавляет `production`: обязательные secrets,
+  защитные настройки и собранные runtime-образы без devDependencies у NestJS
+  и без Go toolchain у Vacancy.
+
+Общие шаги установки зависимостей и копирования исходников находятся в стадии
+`base`; стадия `builder` компилирует приложение для production.
+`NODE_ENV` задаёт режим Node.js во время выполнения, а `build.target` выбирает
+состав образа во время сборки.
+
+Обычная команда Compose автоматически объединяет базу с dev override. Для
+production файлы указываются явно, поэтому dev-настройки туда не попадают:
+
+```bash
+docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+```
+
+Эквивалентные команды Make: `make dev` и `make prod-build`.
+При прямом `docker build` без `--target` собирается последняя стадия — `production`.
 
 ## Публичный HTTP API
 

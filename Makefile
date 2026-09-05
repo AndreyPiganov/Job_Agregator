@@ -1,5 +1,5 @@
 COMPOSE := docker compose
-COMPOSE_PROD := docker compose -f docker-compose.prod.yml
+COMPOSE_PROD := docker compose -f docker-compose.yml -f docker-compose.prod.yml
 VACANCY_DIR := vacancy_service
 GATEWAY_DIR := gateway_service
 AUTH_DIR := auth_service

@@ -1,15 +1,26 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25-alpine AS base
 
-WORKDIR /src
+WORKDIR /app
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+
+FROM base AS development
+
+RUN CGO_ENABLED=0 go build -o /usr/local/bin/vacancy-healthcheck ./cmd/healthcheck
+
+EXPOSE 50051
+
+CMD ["go", "run", "./cmd/api"]
+
+FROM base AS builder
+
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/vacancy-service ./cmd/api
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/vacancy-healthcheck ./cmd/healthcheck
 
-FROM alpine:3.22
+FROM alpine:3.22 AS production
 
 RUN apk add --no-cache ca-certificates su-exec tzdata \
     && addgroup -S app \

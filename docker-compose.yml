@@ -1,17 +1,11 @@
 services:
-
-# Infrastructure
   postgres:
     image: postgres:16-alpine
     container_name: postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-root}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-example}
       POSTGRES_DB: ${POSTGRES_DB:-job}
       PGDATA: /var/lib/postgresql/data/pgdata
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5425}:5432"
     volumes:
       - postgres:/var/lib/postgresql/data
     healthcheck:
@@ -30,11 +24,6 @@ services:
     build:
       context: ./redis
       dockerfile: Dockerfile
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
-    ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 5s
@@ -45,31 +34,20 @@ services:
       driver: json-file
       options:
         max-size: "10m"
-        max-file: "3"
     networks:
       - job-network
 
-
-# Services 
-## Vacancy
   vacancy_service:
     container_name: vacancy_service
     restart: unless-stopped
     init: true
     build:
       context: ./vacancy_service
-      dockerfile: Dockerfile_dev
-    ports:
-      - "127.0.0.1:${VACANCY_GRPC_PORT:-50051}:50051"
+      dockerfile: Dockerfile
     volumes:
-      - ./vacancy_service:/app
       - ./var/log/vacancy_service:/var/log/vacancy-service
-      - go-mod-cache:/go/pkg/mod
-      - go-build-cache:/root/.cache/go-build
     environment:
       GRPC_PORT: "50051"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=public
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       LOG_DIR: /var/log/vacancy-service
     depends_on:
       postgres:
@@ -80,53 +58,36 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 20s
     logging:
       driver: json-file
       options:
         max-size: "10m"
-        max-file: "3"
     networks:
       - job-network
 
-## Auth
   auth_service:
     container_name: auth_service
     restart: unless-stopped
     init: true
     build:
       context: ./auth_service
-      dockerfile: Dockerfile_dev
-    command: ["sh", "-c", "npm run prisma:migrate:deploy && npm run start:dev"]
-    ports:
-      - "127.0.0.1:${AUTH_GRPC_PORT:-5005}:5005"
+      dockerfile: Dockerfile
     volumes:
-      - ./auth_service/src:/app/src
-      - ./auth_service/prisma:/app/prisma
-      - ./auth_service/prisma.config.ts:/app/prisma.config.ts:ro
-      - ./auth_service/nest-cli.json:/app/nest-cli.json:ro
-      - ./auth_service/tsconfig.json:/app/tsconfig.json:ro
-      - ./auth_service/tsconfig.build.json:/app/tsconfig.build.json:ro
       - ./var/log/auth_service:/var/log/auth-service
     environment:
-      NODE_ENV: development
       GRPC_HOST: 0.0.0.0
       GRPC_PORT: "5005"
       USER_GRPC_URL: user_service:5000
       USER_GRPC_TIMEOUT_MS: ${USER_GRPC_TIMEOUT_MS:-3000}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=auth
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
       REDIS_DB: "1"
       REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-500}
       AUTH_SESSION_NAMESPACE: ${AUTH_SESSION_NAMESPACE:-job-aggregator:auth}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-development-refresh-secret-change-before-production}
       JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-600}
       JWT_REFRESH_TTL_SECONDS: ${JWT_REFRESH_TTL_SECONDS:-2592000}
       JWT_ISSUER: ${JWT_ISSUER:-job-aggregator-auth}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-job-aggregator-services}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       LOG_DIR: /var/log/auth-service
     depends_on:
       postgres:
@@ -142,35 +103,21 @@ services:
       driver: json-file
       options:
         max-size: "10m"
-        max-file: "3"
     networks:
       - job-network
 
-## User
   user_service:
     container_name: user_service
     restart: unless-stopped
     init: true
     build:
       context: ./user_service
-      dockerfile: Dockerfile_dev
-    command: ["sh", "-c", "npm run prisma:migrate:deploy && npm run start:dev"]
-    ports:
-      - "127.0.0.1:${USER_GRPC_PORT:-5000}:5000"
+      dockerfile: Dockerfile
     volumes:
-      - ./user_service/src:/app/src
-      - ./user_service/prisma:/app/prisma
-      - ./user_service/prisma.config.ts:/app/prisma.config.ts:ro
-      - ./user_service/nest-cli.json:/app/nest-cli.json:ro
-      - ./user_service/tsconfig.json:/app/tsconfig.json:ro
-      - ./user_service/tsconfig.build.json:/app/tsconfig.build.json:ro
       - ./var/log/user_service:/var/log/user-service
     environment:
-      NODE_ENV: development
       GRPC_HOST: 0.0.0.0
       GRPC_PORT: "5000"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-example}@postgres:5432/${POSTGRES_DB:-job}?schema=user
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       LOG_DIR: /var/log/user-service
     depends_on:
       postgres:
@@ -180,30 +127,19 @@ services:
       driver: json-file
       options:
         max-size: "10m"
-        max-file: "3"
     networks:
       - job-network
 
-## Gateway
   gateway_service:
     container_name: gateway_service
     restart: unless-stopped
     init: true
     build:
       context: ./gateway_service
-      dockerfile: Dockerfile_dev
-    ports:
-      - "127.0.0.1:${GATEWAY_PORT:-3000}:3000"
+      dockerfile: Dockerfile
     volumes:
-      - ./gateway_service/src:/app/src
-      - ./gateway_service/test:/app/test
-      - ./gateway_service/nest-cli.json:/app/nest-cli.json:ro
-      - ./gateway_service/tsconfig.json:/app/tsconfig.json:ro
-      - ./gateway_service/tsconfig.build.json:/app/tsconfig.build.json:ro
       - ./var/log/gateway_service:/var/log/gateway-service
     environment:
-      NODE_ENV: development
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
       LOG_DIR: /var/log/gateway-service
       PORT: "3000"
       AUTH_GRPC_URL: auth_service:5005
@@ -214,7 +150,6 @@ services:
       VACANCY_GRPC_TIMEOUT_MS: ${VACANCY_GRPC_TIMEOUT_MS:-3000}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-change-me}
       REDIS_DB: "0"
       REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-500}
       CACHE_TTL_MS: ${CACHE_TTL_MS:-15000}
@@ -240,12 +175,10 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 20s
     logging:
       driver: json-file
       options:
         max-size: "10m"
-        max-file: "3"
     networks:
       - job-network
 
@@ -256,8 +189,6 @@ services:
     build:
       context: ./nginx
       dockerfile: Dockerfile
-    ports:
-      - "127.0.0.1:${NGINX_PORT:-80}:80"
     depends_on:
       gateway_service:
         condition: service_healthy
@@ -272,7 +203,6 @@ services:
       driver: json-file
       options:
         max-size: "10m"
-        max-file: "3"
     networks:
       - job-network
 
@@ -282,5 +212,3 @@ networks:
 
 volumes:
   postgres:
-  go-mod-cache:
-  go-build-cache:

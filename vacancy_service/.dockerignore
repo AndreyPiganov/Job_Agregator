@@ -8,3 +8,4 @@ tmp
 *.log
 *.test
 coverage.out
+Dockerfile
